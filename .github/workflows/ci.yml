@@ -1,0 +1,55 @@
+name: CI
+
+# gitleaks y los tests en cada push y cada PR. El despliegue (CD) se suma
+# cuando esté definido dónde corre el servidor.
+on:
+  push:
+  pull_request:
+
+jobs:
+  gitleaks:
+    name: Detección de secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Si encuentra un secret en el código o en el historial, el pipeline falla.
+      - name: Escanear secrets con gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  hit1-unitarios:
+    name: Hit 1 — tests unitarios y de API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hit1/servidor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+      - name: Compilar
+        run: python -m compileall -q app tests
+      - name: Tests
+        run: python -m pytest -v
+
+  hit1-integracion:
+    name: Hit 1 — integración con Docker
+    runs-on: ubuntu-latest
+    needs: hit1-unitarios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Instalar dependencias
+        run: pip install -r hit1/servidor/requirements-dev.txt
+      # Construye las imágenes, levanta el servidor, espera a healthy, corre los
+      # tests contra Docker real y baja todo.
+      - name: Levantar y probar
+        run: PYTHON=python hit1/servidor/tests/integracion.sh
