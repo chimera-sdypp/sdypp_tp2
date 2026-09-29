@@ -1,0 +1,42 @@
+{
+  "1": {
+    "workers": 1,
+    "tareas_completadas": 16,
+    "tiempo_segundos": 21.44,
+    "throughput_tpm": 44.78,
+    "throughput_tps": 0.75,
+    "speedup_real": 1.0,
+    "speedup_amdahl": 1.0,
+    "speedup_ideal": 1
+  },
+  "2": {
+    "workers": 2,
+    "tareas_completadas": 16,
+    "tiempo_segundos": 11.84,
+    "throughput_tpm": 81.08,
+    "throughput_tps": 1.35,
+    "speedup_real": 1.81,
+    "speedup_amdahl": 1.74,
+    "speedup_ideal": 2
+  },
+  "4": {
+    "workers": 4,
+    "tareas_completadas": 16,
+    "tiempo_segundos": 7.52,
+    "throughput_tpm": 127.66,
+    "throughput_tps": 2.13,
+    "speedup_real": 2.85,
+    "speedup_amdahl": 2.76,
+    "speedup_ideal": 4
+  },
+  "8": {
+    "workers": 8,
+    "tareas_completadas": 16,
+    "tiempo_segundos": 5.36,
+    "throughput_tpm": 179.1,
+    "throughput_tps": 2.99,
+    "speedup_real": 4.0,
+    "speedup_amdahl": 3.9,
+    "speedup_ideal": 8
+  }
+}
