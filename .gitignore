@@ -1,0 +1,26 @@
+# Secretos: nunca al repo. Van por GitHub Secrets o archivos montados en el host.
+.env
+.env.*
+!.env.example
+secretos/
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs y datos que genera la ejecución
+logs/
+*.log
+
+# Editores y sistema
+.idea/
+.vscode/
+*.swp
+.DS_Store
