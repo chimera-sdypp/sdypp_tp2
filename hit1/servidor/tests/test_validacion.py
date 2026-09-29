@@ -25,6 +25,17 @@ def _problemas(cuerpo):
     return {d["campo"]: d["problema"] for d in error.detalles}
 
 
+def test_32_niveles_de_anidamiento_se_aceptan():
+    parametros = {}
+    for _ in range(30):  # objeto raíz + parametros + 30 = 32 niveles
+        parametros = {"a": parametros}
+    validar_solicitud(_cuerpo({**VALIDO, "parametros": parametros}), JSON)
+
+
+def test_corchetes_dentro_de_strings_no_cuentan():
+    validar_solicitud(_cuerpo({**VALIDO, "datos": {"texto": "[{" * 100 + '\\"'}}), JSON)
+
+
 def test_payload_valido():
     solicitud = validar_solicitud(_cuerpo(VALIDO), JSON)
     assert solicitud.calculo == "suma"
@@ -54,7 +65,9 @@ def test_cuerpo_vacio_es_400(cuerpo):
     (b'{"a": Infinity}', "Infinity"),
     (b'{"imagen": "a:1", "imagen": "b:1"}', "duplicadas en el JSON: imagen"),
     (b"[" * 100_000 + b"]" * 100_000, "anidado"),
-])
+    (b'{"parametros": ' + b'{"a": ' * 32 + b"1" + b"}" * 33, "anidado"),
+], ids=["mal-formado", "no-utf8", "nan", "infinity", "claves-duplicadas", "100000-niveles",
+        "33-niveles"])
 def test_json_invalido_es_400(cuerpo, motivo):
     error = _error(cuerpo)
     assert error.tipo is TipoError.JSON_INVALIDO

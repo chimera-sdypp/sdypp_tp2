@@ -91,6 +91,37 @@ def _objeto_sin_duplicados(pares):
     return dict(pares)
 
 
+MAX_ANIDAMIENTO = 32
+
+
+def _anidamiento(texto):
+    """Nivel máximo de `[` / `{` abiertos, sin contar los que están dentro de strings.
+
+    Se mide antes de parsear porque el parser de JSON es recursivo: hasta dónde
+    llega depende del stack de la máquina (con `ulimit -s unlimited` un JSON de
+    100.000 niveles se parsea; con el stack por defecto, falla). Con un límite
+    explícito, la respuesta es la misma en cualquier entorno.
+    """
+    maximo = actual = 0
+    en_string = escapado = False
+    for caracter in texto:
+        if en_string:
+            if escapado:
+                escapado = False
+            elif caracter == "\\":
+                escapado = True
+            elif caracter == '"':
+                en_string = False
+        elif caracter == '"':
+            en_string = True
+        elif caracter in "[{":
+            actual += 1
+            maximo = max(maximo, actual)
+        elif caracter in "]}":
+            actual -= 1
+    return maximo
+
+
 def _rechazar_constante(nombre):
     raise ErrorApi(TipoError.JSON_INVALIDO, f"{nombre} no es un valor JSON válido")
 
@@ -111,16 +142,18 @@ def validar_solicitud(cuerpo, content_type):
         raise ErrorApi(TipoError.CUERPO_VACIO, "el cuerpo está vacío: se esperaba un objeto JSON")
     try:
         texto = cuerpo.decode("utf-8")
-        objeto = json.loads(texto, object_pairs_hook=_objeto_sin_duplicados,
-                            parse_constant=_rechazar_constante)
     except UnicodeDecodeError:
         raise ErrorApi(TipoError.JSON_INVALIDO, "el cuerpo no está codificado en UTF-8") from None
+    if _anidamiento(texto) > MAX_ANIDAMIENTO:
+        raise ErrorApi(TipoError.JSON_INVALIDO,
+                       f"JSON demasiado anidado: como máximo {MAX_ANIDAMIENTO} niveles")
+    try:
+        objeto = json.loads(texto, object_pairs_hook=_objeto_sin_duplicados,
+                            parse_constant=_rechazar_constante)
     except json.JSONDecodeError as error:
         raise ErrorApi(TipoError.JSON_INVALIDO,
                        f"JSON mal formado: {error.msg} (línea {error.lineno}, columna {error.colno})"
                        ) from None
-    except RecursionError:
-        raise ErrorApi(TipoError.JSON_INVALIDO, "JSON demasiado anidado") from None
 
     if not isinstance(objeto, dict):
         raise ErrorApi(TipoError.PAYLOAD_INVALIDO,

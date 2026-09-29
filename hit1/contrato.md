@@ -59,6 +59,8 @@ Reglas de validación — **se rechaza, nunca se "arregla"**:
 - Claves duplicadas en el JSON (`{"imagen": "a", "imagen": "b"}`) → `400`: si no, cada parser se
   queda con una distinta.
 - `NaN`, `Infinity` → `400`: no son JSON válido.
+- Más de 32 niveles de anidamiento → `400`. El límite es explícito: el parser de JSON es recursivo
+  y, sin límite, aceptaría o rechazaría el mismo cuerpo según el stack de la máquina.
 - El cuerpo tiene que ser un objeto JSON (un array → `422`), de 64 KiB como máximo (`413`).
 
 Respuestas:
@@ -66,7 +68,7 @@ Respuestas:
 | Código | Cuándo | `contenido` / `contenido.error.tipo` |
 |---|---|---|
 | `200` | La tarea terminó | `{calculo, resultado}` |
-| `400` | Cuerpo vacío, JSON mal formado, claves duplicadas, `NaN` | `CUERPO_VACIO`, `JSON_INVALIDO` |
+| `400` | Cuerpo vacío, JSON mal formado, claves duplicadas, `NaN`, demasiado anidado | `CUERPO_VACIO`, `JSON_INVALIDO` |
 | `403` | La imagen no está en la lista blanca | `IMAGEN_NO_PERMITIDA` |
 | `413` | Cuerpo de más de 64 KiB | `CUERPO_DEMASIADO_GRANDE` |
 | `415` | `Content-Type` distinto de `application/json` | `TIPO_DE_CONTENIDO` |
