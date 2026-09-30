@@ -22,7 +22,7 @@ trap bajar EXIT
 
 cat > "$ENTORNO" <<FIN
 DOCKER_GID=$(stat -c %g /var/run/docker.sock)
-TP2_IMAGENES_PERMITIDAS=cerberus/tarea-prueba,cerberus/tarea
+TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea-prueba,cerberusdistribuido/tarea
 TP2_PUERTO=$PUERTO
 TP2_TIMEOUT_EJECUCION=4
 TP2_REGISTRY_USUARIO=
@@ -30,13 +30,13 @@ TP2_REGISTRY_TOKEN=
 FIN
 
 echo "==> imágenes de la tarea de prueba y de la tarea real"
-docker build -q -t cerberus/tarea-prueba:test "$AQUI/tarea_prueba" >/dev/null
-docker build -q -t cerberus/tarea:test "$HIT1/tarea" >/dev/null
+docker build -q -t cerberusdistribuido/tarea-prueba:test "$AQUI/tarea_prueba" >/dev/null
+docker build -q -t cerberusdistribuido/tarea:test "$HIT1/tarea" >/dev/null
 echo "==> servidor (build + up, espera a healthy)"
 "${COMPOSE[@]}" up --build -d --wait
 echo "==> tests de integración"
 cd "$AQUI/.."
 TP2_URL="http://127.0.0.1:$PUERTO" "$PYTHON" -m pytest -m integracion -v -p no:cacheprovider
 echo "==> cliente contra el servicio tarea real"
-"$PYTHON" "$HIT1/cliente/cliente.py" division '{"a": 7, "b": 2}' --imagen cerberus/tarea:test \
+"$PYTHON" "$HIT1/cliente/cliente.py" division '{"a": 7, "b": 2}' --imagen cerberusdistribuido/tarea:test \
     --servidor "http://127.0.0.1:$PUERTO"

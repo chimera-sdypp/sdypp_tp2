@@ -21,7 +21,7 @@ cd hit1
 cp .env.example .env
 # Completar en .env:
 #   DOCKER_GID=<salida de: stat -c %g /var/run/docker.sock>
-#   TP2_IMAGENES_PERMITIDAS=cerberus/tarea
+#   TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea
 docker compose up --build -d --wait
 curl -s localhost:8080/health
 ```
@@ -29,8 +29,8 @@ curl -s localhost:8080/health
 Mandar una tarea con el cliente (la primera vez el servidor baja la imagen de Docker Hub):
 
 ```bash
-python3 cliente/cliente.py suma '{"a": 3, "b": 4}' --imagen cerberus/tarea:1.0.0
-python3 cliente/cliente.py division '{"a": 1, "b": 0}' --imagen cerberus/tarea:1.0.0   # 422
+python3 cliente/cliente.py suma '{"a": 3, "b": 4}' --imagen cerberusdistribuido/tarea:1.0.0
+python3 cliente/cliente.py division '{"a": 1, "b": 0}' --imagen cerberusdistribuido/tarea:1.0.0   # 422
 # Otro servidor: --servidor http://host:8080 (o la variable TP2_SERVIDOR). Datos adicionales: --datos '{...}'
 ```
 
@@ -39,15 +39,15 @@ O con `curl`:
 ```bash
 curl -s -X POST localhost:8080/getRemoteTask \
   -H 'Content-Type: application/json' \
-  -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberus/tarea:1.0.0"}'
+  -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0.0"}'
 ```
 
 ### Publicar el servicio tarea en Docker Hub
 
 ```bash
 docker login                                   # con un token de escritura, no la contraseña
-docker build -t cerberus/tarea:1.0.0 tarea/
-docker push cerberus/tarea:1.0.0
+docker build -t cerberusdistribuido/tarea:1.0.0 tarea/
+docker push cerberusdistribuido/tarea:1.0.0
 ```
 
 Logs: `docker compose logs -f servidor` (consola) y el volumen `logs` (disco, archivo rotativo);

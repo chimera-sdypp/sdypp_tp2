@@ -2,7 +2,7 @@
 
 Los corre `tests/integracion.sh`, que levanta todo desde cero. A mano:
     TP2_URL=http://127.0.0.1:8080 python -m pytest -m integracion -v
-Suponen TP2_IMAGENES_PERMITIDAS=cerberus/tarea-prueba y TP2_TIMEOUT_EJECUCION=4
+Suponen TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea-prueba y TP2_TIMEOUT_EJECUCION=4
 (es lo que configura el script).
 """
 
@@ -18,7 +18,7 @@ import pytest
 pytestmark = pytest.mark.integracion
 
 URL = os.environ.get("TP2_URL", "http://127.0.0.1:8080").rstrip("/")
-IMAGEN = "cerberus/tarea-prueba:test"
+IMAGEN = "cerberusdistribuido/tarea-prueba:test"
 
 
 def pedir(metodo, ruta, cuerpo=None):
@@ -64,7 +64,7 @@ def test_imagen_fuera_de_la_lista():
 
 def test_tag_inexistente_de_un_repo_permitido():
     """Necesita Internet: el servidor intenta el pull y Docker Hub dice que no existe."""
-    codigo, cuerpo = tarea("suma", {"a": 1, "b": 1}, imagen="cerberus/tarea-prueba:no-existe-9")
+    codigo, cuerpo = tarea("suma", {"a": 1, "b": 1}, imagen="cerberusdistribuido/tarea-prueba:no-existe-9")
     assert codigo == 422
     assert cuerpo["contenido"]["error"]["tipo"] == "IMAGEN_INEXISTENTE"
 

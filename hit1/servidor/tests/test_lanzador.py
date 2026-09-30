@@ -10,7 +10,7 @@ from app.imagenes import parsear
 from app.lanzador import Lanzador, SinConexion, Vencido, http_json
 from dobles import DockerFalso, HttpFalso, RelojFalso, logger_silencioso, sobre
 
-IMAGEN = parsear("cerberus/tarea:1.0")
+IMAGEN = parsear("cerberusdistribuido/tarea:1.0")
 CONFIG = Config(timeout_arranque=5, timeout_ejecucion=10)
 
 
@@ -38,7 +38,7 @@ def test_devuelve_el_resultado_y_borra_el_contenedor():
     lanzador, docker_falso = _lanzador(http=http)
     assert _ejecutar(lanzador) == 7
     [contenedor] = docker_falso.creados
-    assert contenedor.imagen == "docker.io/cerberus/tarea:1.0"
+    assert contenedor.imagen == "docker.io/cerberusdistribuido/tarea:1.0"
     assert contenedor.network == "tp2-tareas"
     assert contenedor.borrado
     assert docker_falso.pulls == []  # ya estaba en el host
@@ -61,7 +61,7 @@ def test_descarga_la_imagen_si_falta_con_credenciales_del_servidor():
     lanzador, _ = _lanzador(docker_falso, config=Config(registry_usuario="cerberus",
                                                         registry_token="dckr_pat_x"))
     _ejecutar(lanzador)
-    assert docker_falso.pulls == [{"nombre": "docker.io/cerberus/tarea", "tag": "1.0",
+    assert docker_falso.pulls == [{"nombre": "docker.io/cerberusdistribuido/tarea", "tag": "1.0",
                                    "auth": {"username": "cerberus", "password": "dckr_pat_x"}}]
 
 

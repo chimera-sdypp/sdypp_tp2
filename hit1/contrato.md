@@ -40,7 +40,7 @@ Cabecera obligatoria: `Content-Type: application/json`.
   "calculo": "suma",
   "parametros": {"a": 3, "b": 4},
   "datos": {},
-  "imagen": "cerberus/tarea:1.0.0"
+  "imagen": "cerberusdistribuido/tarea:1.0.0"
 }
 ```
 
@@ -97,9 +97,10 @@ no puede ejecutar tareas.
 
 ## 3. Lista blanca de imágenes
 
-`TP2_IMAGENES_PERMITIDAS` es una lista de repositorios separados por comas (`cerberus/tarea`). Los
-nombres se normalizan antes de comparar: `cerberus/tarea` ≡ `docker.io/cerberus/tarea`. Si la
-variable está vacía no se permite **ninguna** imagen.
+`TP2_IMAGENES_PERMITIDAS` es una lista de repositorios separados por comas
+(`cerberusdistribuido/tarea`). Los nombres se normalizan antes de comparar:
+`cerberusdistribuido/tarea` ≡ `docker.io/cerberusdistribuido/tarea`. Si la variable está vacía no
+se permite **ninguna** imagen.
 
 ## 4. Tipos de error
 

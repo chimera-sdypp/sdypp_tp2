@@ -29,7 +29,7 @@ class SolicitudTarea(BaseModel):
     datos: dict[str, Any] = Field(default_factory=dict, description="Datos adicionales")
     imagen: str = Field(min_length=1, max_length=imagenes.LARGO_MAXIMO,
                         description="Imagen Docker con tag fijo o digest; tiene que estar en la lista blanca",
-                        examples=["cerberus/tarea:1.0.0"])
+                        examples=["cerberusdistribuido/tarea:1.0.0"])
 
     @field_validator("imagen")
     @classmethod

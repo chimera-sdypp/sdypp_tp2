@@ -12,7 +12,7 @@ name: tp2-hit1
 services:
   servidor:
     build: ./servidor
-    image: cerberus/tp2-servidor:dev
+    image: cerberusdistribuido/tp2-servidor:dev
     environment:
       TP2_IMAGENES_PERMITIDAS: ${TP2_IMAGENES_PERMITIDAS:?definir TP2_IMAGENES_PERMITIDAS en .env}
       TP2_TIMEOUT_EJECUCION: ${TP2_TIMEOUT_EJECUCION:-60}
