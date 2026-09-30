@@ -1,33 +1,53 @@
-# Hit 1 — Tareas remotas en contenedores (servidor)
+# Hit 1 — Tareas remotas en contenedores
 
-Servidor HTTP contenerizado que recibe una tarea por `POST` (JSON), levanta **temporalmente** el
-servicio tarea como contenedor Docker, le pasa el trabajo, espera el resultado, se lo devuelve al
-cliente y borra el contenedor.
+El **cliente** manda una tarea por `POST` (JSON) al **servidor**, que levanta **temporalmente** el
+**servicio tarea** como contenedor Docker, le pasa el trabajo, espera el resultado, se lo devuelve
+al cliente y borra el contenedor.
 
-- Contrato de la API: [`contrato.md`](contrato.md)
-- `getRemoteTask()` → [`servidor/app/main.py`](servidor/app/main.py) ·
-  `ejecutarTareaRemota()` → [`servidor/app/lanzador.py`](servidor/app/lanzador.py)
+| Parte | Dónde |
+|---|---|
+| Servidor (contenerizado) | [`servidor/`](servidor/): `getRemoteTask()` en [`app/main.py`](servidor/app/main.py), `ejecutarTareaRemota()` en [`app/lanzador.py`](servidor/app/lanzador.py) |
+| Servicio tarea (imagen en Docker Hub) | [`tarea/tarea.py`](tarea/tarea.py): `ejecutarTarea()` |
+| Cliente | [`cliente/cliente.py`](cliente/cliente.py) |
+| Contrato de la API | [`contrato.md`](contrato.md) |
 
 ## Cómo correrlo
 
-Requisitos: Docker con Compose v2, Linux (o WSL2). Todo desde la carpeta `hit1/`.
+Requisitos: Docker con Compose v2, Linux (o WSL2) y Python 3 para el cliente (sólo biblioteca
+estándar). Todo desde la carpeta `hit1/`.
 
 ```bash
 cd hit1
 cp .env.example .env
 # Completar en .env:
 #   DOCKER_GID=<salida de: stat -c %g /var/run/docker.sock>
-#   TP2_IMAGENES_PERMITIDAS=<repositorio de la imagen tarea, p. ej. cerberus/tarea>
+#   TP2_IMAGENES_PERMITIDAS=cerberus/tarea
 docker compose up --build -d --wait
 curl -s localhost:8080/health
 ```
 
-Mandar una tarea:
+Mandar una tarea con el cliente (la primera vez el servidor baja la imagen de Docker Hub):
+
+```bash
+python3 cliente/cliente.py suma '{"a": 3, "b": 4}' --imagen cerberus/tarea:1.0.0
+python3 cliente/cliente.py division '{"a": 1, "b": 0}' --imagen cerberus/tarea:1.0.0   # 422
+# Otro servidor: --servidor http://host:8080 (o la variable TP2_SERVIDOR). Datos adicionales: --datos '{...}'
+```
+
+O con `curl`:
 
 ```bash
 curl -s -X POST localhost:8080/getRemoteTask \
   -H 'Content-Type: application/json' \
   -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberus/tarea:1.0.0"}'
+```
+
+### Publicar el servicio tarea en Docker Hub
+
+```bash
+docker login                                   # con un token de escritura, no la contraseña
+docker build -t cerberus/tarea:1.0.0 tarea/
+docker push cerberus/tarea:1.0.0
 ```
 
 Logs: `docker compose logs -f servidor` (consola) y el volumen `logs` (disco, archivo rotativo);
@@ -43,12 +63,13 @@ python3 -m venv .venv
 source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 python -m pytest                   # unitarios y de API: no necesitan Docker
+(cd ../tarea && python -m pytest)  # unitarios del servicio tarea
 ./tests/integracion.sh             # integración: levanta todo con Docker real, prueba y lo baja
 ```
 
 Los de integración usan una **tarea de prueba** ([`servidor/tests/tarea_prueba/`](servidor/tests/tarea_prueba/))
 que cumple el contrato del servicio tarea y permite forzar cada falla (división por cero, error
-500, timeout).
+500, timeout). Al final, el script corre el **cliente** contra el **servicio tarea real**.
 
 ## Arquitectura
 
@@ -152,6 +173,5 @@ Variables de entorno (las principales están en [`.env.example`](.env.example)):
 
 ## Pendiente
 
-- Acordar el contrato del servicio tarea ([`contrato.md` §5](contrato.md)) con la imagen real
-  publicada en Docker Hub, y probar el pull privado con el token.
-- Cliente, CD, despliegue público y tests contra lo desplegado.
+- Probar el pull privado con el token de sólo lectura.
+- CD, despliegue público y tests contra lo desplegado.
