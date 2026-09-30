@@ -37,6 +37,9 @@ jobs:
         run: python -m compileall -q app tests
       - name: Tests
         run: python -m pytest -v
+      - name: Tests del servicio tarea
+        working-directory: hit1/tarea
+        run: python -m pytest -v
 
   hit1-integracion:
     name: Hit 1 — integración con Docker
