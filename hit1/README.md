@@ -22,6 +22,8 @@ cp .env.example .env
 # Completar en .env:
 #   DOCKER_GID=<salida de: stat -c %g /var/run/docker.sock>
 #   TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea
+#   TP2_REGISTRY_USUARIO=cerberusdistribuido
+#   TP2_REGISTRY_TOKEN=<token de Docker Hub de sólo lectura>   (la imagen es privada)
 docker compose up --build -d --wait
 curl -s localhost:8080/health
 ```
@@ -43,6 +45,8 @@ curl -s -X POST localhost:8080/getRemoteTask \
 ```
 
 ### Publicar el servicio tarea en Docker Hub
+
+La imagen está en un repositorio **privado** de Docker Hub (`cerberusdistribuido/tarea`).
 
 ```bash
 docker login                                   # con un token de escritura, no la contraseña
@@ -129,6 +133,9 @@ quien hace el pull, y el cliente no interviene. Los *image pull secrets* y *Work
 OIDC* propiamente dichos son de Kubernetes y de la nube (TP3); los **tokens de corta duración** no
 tienen un flujo directo en Docker Hub.
 
+Probado con la imagen privada: con el token, el servidor la baja y la tarea responde; sin el token,
+Docker Hub la niega y el cliente recibe `422 IMAGEN_INEXISTENTE`.
+
 > ⚠️ **"Hacer `docker login` en el host" no alcanza** si el servidor corre en un contenedor: las
 > credenciales de un pull las manda el **cliente** de Docker (acá, el SDK adentro del servidor) y el
 > daemon no guarda ninguna. Un `docker login` en el host las deja en `~/.docker/config.json` del
@@ -173,5 +180,4 @@ Variables de entorno (las principales están en [`.env.example`](.env.example)):
 
 ## Pendiente
 
-- Probar el pull privado con el token de sólo lectura.
 - CD, despliegue público y tests contra lo desplegado.
