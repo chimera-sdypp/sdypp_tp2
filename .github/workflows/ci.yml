@@ -56,7 +56,7 @@ jobs:
       # Construye las imágenes, levanta el servidor, espera a healthy, corre los
       # tests contra Docker real y baja todo.
       - name: Levantar y probar
-        run: PYTHON=python hit1/servidor/tests/integracion.sh
+        run: PYTHON=python bash hit1/servidor/tests/integracion.sh
 
   hit1-imagen:
     name: Hit 1 — publicar la imagen del servidor
@@ -135,7 +135,7 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r hit2/servidor/requirements-dev.txt
       - name: Levantar y probar
-        run: PYTHON=python hit2/servidor/tests/integracion.sh
+        run: PYTHON=python bash hit2/servidor/tests/integracion.sh
 
   hit2-imagen:
     name: Hit 2 — publicar la imagen del servidor
