@@ -189,6 +189,8 @@ flowchart LR
   GHCR (`ghcr.io/mnomico/sdypp_tp2-hit1`) con el `GITHUB_TOKEN` efímero del job.
 - En la VM, un timer de systemd hace `docker compose pull && up -d` cada minuto: la VM trae sola
   la imagen nueva. GitHub no tiene ninguna credencial de la VM y el SSH no queda abierto a Internet.
+- Después, el CI prueba lo desplegado: manda con el cliente una suma (`200`) y una división por
+  cero (`422`) a la URL pública, lo que incluye el pull de la imagen privada de la tarea.
 - El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales. Lo cambia el
   dueño del repositorio una sola vez, en *Package settings → Change visibility*.
 
@@ -208,7 +210,3 @@ Variables de entorno (las principales están en [`.env.example`](.env.example)):
 `TP2_IMAGENES_PERMITIDAS`, `TP2_TIMEOUT_EJECUCION` (60 s), `TP2_TIMEOUT_ARRANQUE` (30 s),
 `TP2_TAREA_PUERTO` (8080), `TP2_RED_TAREAS` (`tp2-tareas`), `TP2_REGISTRY_USUARIO`,
 `TP2_REGISTRY_TOKEN_ARCHIVO`, `TP2_DIR_LOGS`.
-
-## Pendiente
-
-- Tests contra lo desplegado.
