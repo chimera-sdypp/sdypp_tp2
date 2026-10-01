@@ -186,7 +186,7 @@ flowchart LR
 ```
 
 - En cada push a `main`, después de gitleaks y los tests, el CI publica la imagen del servidor en
-  GHCR (`ghcr.io/mnomico/sdypp_tp2-hit1`) con el `GITHUB_TOKEN` efímero del job.
+  GHCR (`ghcr.io/svetovid-sdypp/sdypp_tp2-hit1`) con el `GITHUB_TOKEN` efímero del job.
 - En la VM, un timer de systemd hace `docker compose pull && up -d` cada minuto: la VM trae sola
   la imagen nueva. GitHub no tiene ninguna credencial de la VM y el SSH no queda abierto a Internet.
 - Después, el CI prueba lo desplegado: manda con el cliente una suma (`200`) y una división por
@@ -200,7 +200,7 @@ Instalarlo en una VM Ubuntu con Docker:
 scp -i clave.pem hit1/despliegue/instalar_vm.sh hit1/docker-compose.yml ubuntu@<IP>:
 ssh -i clave.pem ubuntu@<IP>
 # en la VM: crear ~/.env como el .env.example, con TP2_PUERTO=8081 y
-#   TP2_IMAGEN=ghcr.io/mnomico/sdypp_tp2-hit1:latest; después:
+#   TP2_IMAGEN=ghcr.io/svetovid-sdypp/sdypp_tp2-hit1:latest; después:
 sudo bash instalar_vm.sh && rm ~/.env
 ```
 
