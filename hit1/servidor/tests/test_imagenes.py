@@ -9,7 +9,7 @@ DIGEST = "sha256:" + "a" * 64
     ("cerberusdistribuido/tarea:1.0.0", "docker.io/cerberusdistribuido/tarea", "1.0.0", None),
     ("docker.io/cerberusdistribuido/tarea:1.0", "docker.io/cerberusdistribuido/tarea", "1.0", None),
     ("python:3.14-slim", "docker.io/library/python", "3.14-slim", None),
-    ("ghcr.io/mnomico/tarea:v2", "ghcr.io/mnomico/tarea", "v2", None),
+    ("ghcr.io/svetovid-sdypp/tarea:v2", "ghcr.io/svetovid-sdypp/tarea", "v2", None),
     ("localhost:5000/tarea:1", "localhost:5000/tarea", "1", None),
     (f"cerberusdistribuido/tarea@{DIGEST}", "docker.io/cerberusdistribuido/tarea", None, DIGEST),
 ])
