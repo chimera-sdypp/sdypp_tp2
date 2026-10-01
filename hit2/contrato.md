@@ -42,7 +42,7 @@ Cabeceras obligatorias:
   "calculo": "suma",
   "parametros": {"a": 3, "b": 4},
   "datos": {},
-  "imagen": "cerberus/tarea:1.0.0"
+  "imagen": "cerberusdistribuido/tarea:1.0.0"
 }
 ```
 
@@ -75,3 +75,34 @@ Cabeceras obligatorias:
 - **Límite configurable**: `TP2_WORKERS_MAX` (por defecto `4`).
 - **Exclusión mutua**: La cola de tareas está protegida por un **Mutex**. Toda asignación de tareas a un worker se realiza en una sección crítica para evitar race conditions.
 - **Orden de la cola**: Las tareas en espera se despachan ordenadas por menor **timestamp de Lamport** (y FIFO en caso de empate).
+
+---
+
+## 4. Lista blanca de imágenes
+
+`TP2_IMAGENES_PERMITIDAS` es una lista de repositorios separados por comas
+(`cerberusdistribuido/tarea`). Los nombres se normalizan antes de comparar:
+`cerberusdistribuido/tarea` ≡ `docker.io/cerberusdistribuido/tarea`. Si la variable está vacía no
+se permite **ninguna** imagen.
+
+---
+
+## 5. Lo que el servidor espera del servicio tarea
+
+Lo implementa [`tarea/tarea.py`](tarea/tarea.py). Usa **el mismo sobre** que el servidor (§1):
+`{"codigo", "contenido"}`, salga bien o mal.
+
+- Escucha HTTP en el puerto `8080` del contenedor.
+- `GET /health` → `200` cuando está listo. El servidor lo consulta antes de mandarle el trabajo.
+- `POST /ejecutarTarea` con `{"calculo", "parametros", "datos"}`:
+  - `200` → `{"codigo": 200, "contenido": {"resultado": <cualquier JSON>}}`
+  - `4xx` → los parámetros no sirven (p. ej. división por cero):
+    `{"codigo": 422, "contenido": {"error": {"tipo": "…", "mensaje": "división por cero"}}}`.
+    El `mensaje` le llega al cliente como `TAREA_RECHAZADA`.
+  - `5xx` → falla de la tarea; el cliente recibe `TAREA_FALLIDA`.
+  - Un `200` sin el sobre o sin `contenido.resultado` es una respuesta inválida: `TAREA_FALLIDA`.
+
+Cálculos de `tarea/tarea.py`: `suma`, `resta`, `multiplicacion` y `division`, sobre
+`parametros = {"a": <número>, "b": <número>}`. Un cálculo desconocido, parámetros que no son números,
+la división por cero o un resultado fuera de rango son un `422`.
+

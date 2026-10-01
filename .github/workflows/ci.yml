@@ -101,3 +101,83 @@ jobs:
           cliente division '{"a": 1, "b": 0}' > division.json || true
           cat division.json
           grep -q '"codigo": 422' division.json
+
+  hit2-unitarios:
+    name: Hit 2 — tests unitarios y de API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hit2/servidor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+      - name: Compilar
+        run: python -m compileall -q app tests
+      - name: Tests
+        run: python -m pytest -v -m "not integracion"
+      - name: Tests del servicio tarea
+        working-directory: hit2/tarea
+        run: python -m pytest -v
+
+  hit2-integracion:
+    name: Hit 2 — integración con Docker
+    runs-on: ubuntu-latest
+    needs: hit2-unitarios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Instalar dependencias
+        run: pip install -r hit2/servidor/requirements-dev.txt
+      - name: Levantar y probar
+        run: PYTHON=python hit2/servidor/tests/integracion.sh
+
+  hit2-imagen:
+    name: Hit 2 — publicar la imagen del servidor
+    runs-on: ubuntu-latest
+    needs: [gitleaks, hit2-integracion]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir y publicar en GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          imagen="ghcr.io/${GITHUB_REPOSITORY,,}-hit2"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            -t "$imagen:$GITHUB_SHA" -t "$imagen:latest" hit2/servidor
+          docker push "$imagen:$GITHUB_SHA"
+          docker push "$imagen:latest"
+          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en menos de un minuto."
+
+  hit2-desplegado:
+    name: Hit 2 — prueba contra lo desplegado
+    runs-on: ubuntu-latest
+    needs: hit2-imagen
+    env:
+      TP2_SERVIDOR: ${{ vars.TP2_HIT2_URL || 'http://18.231.127.74:8082' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mandar tareas al servidor público con el cliente
+        run: |
+          cliente() { python3 hit2/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
+          for intento in $(seq 12); do
+            cliente suma '{"a": 3, "b": 4}' > suma.json && break
+            sleep 15
+          done
+          cat suma.json
+          grep -q '"resultado": 7' suma.json
+          grep -q '"lamport_ts"' suma.json
+          cliente division '{"a": 1, "b": 0}' > division.json || true
+          cat division.json
+          grep -q '"codigo": 422' division.json
+

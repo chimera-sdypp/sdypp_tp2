@@ -83,16 +83,22 @@ Respuesta esperada:
 }
 ```
 
-### Paso 3: Correr los Tests Unitarios e Integración
+### Paso 3: Correr los Tests Unitarios
 ```bash
 cd hit2/servidor
-py -m pytest
+python3 -m pytest -v -m "not integracion"
+(cd ../tarea && python3 -m pytest -v)
+./tests/integracion.sh             # integración con Docker real
 ```
 
 ### Paso 4: Ejecutar Mediciones de Throughput (Benchmark)
 ```bash
 cd hit2
-py cliente/benchmark.py
+# Medición contra servidor en vivo:
+python3 cliente/benchmark.py --servidor http://localhost:8080
+
+# O evaluar mediante el modelo analítico experimental:
+python3 cliente/benchmark.py --simulado
 ```
 
 ---
@@ -156,5 +162,34 @@ Al ejecutar tanto el cliente, el servidor FastAPI y todos los contenedores de wo
 - **Identificación/Medición**: `iostat -xz 1` o `iotop` para detectar un elevado `%util` en el dispositivo de almacenamiento.
 
 ### 5. Memoria RAM
-- **Problema**: Cada contenedor Docker activo consume un *working set* mínimo de memoria RAM (Python/FastAPI runtime ~30-50MB por worker).
+- **Problema**: Cada contenedor Docker activo consume un *working set* mínimo de memoria RAM (Python runtime ~30-50MB por worker).
 - **Identificación/Medición**: `docker stats` y `free -m`.
+
+---
+
+## 6. Despliegue
+
+El Hit 2 está preparado para desplegarse en la misma VM Ubuntu de AWS EC2 (puerto `8082`), conviviendo con Hit 1 (`8081`) y TP1 (`8080`).
+
+```mermaid
+flowchart LR
+    G["GitHub Actions<br/>push a main"] -- "tests en verde ⇒<br/>publica la imagen" --> R[(GHCR)]
+    subgraph VM[VM AWS EC2]
+        T["timer de systemd<br/>cada minuto"] -- "compose pull + up -d" --> S[Servidor Hit 2 :8082]
+    end
+    T -- "¿hay imagen nueva?" --> R
+```
+
+- En cada push a `main`, el CI (`.github/workflows/ci.yml`) ejecuta gitleaks, tests unitarios y de integración de ambos hits, publica `ghcr.io/<repo>-hit2:latest` y prueba el despliegue público con el cliente.
+- En la VM, un timer de systemd (`sdypp-tp2-hit2.timer`) ejecuta periódicamente `docker compose pull && up -d`.
+
+### Instalación en la VM:
+
+```bash
+scp -i clave.pem hit2/despliegue/instalar_vm.sh hit2/docker-compose.yml ubuntu@<IP>:
+ssh -i clave.pem ubuntu@<IP>
+# en la VM: crear ~/.env a partir de .env.example, con TP2_PUERTO=8082 y
+#   TP2_IMAGEN=ghcr.io/<repo>-hit2:latest; luego:
+sudo bash instalar_vm.sh && rm ~/.env
+```
+

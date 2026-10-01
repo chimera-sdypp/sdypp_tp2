@@ -5,7 +5,7 @@ name: tp2-hit2
 services:
   servidor:
     build: ./servidor
-    image: cerberus/tp2-servidor-hit2:dev
+    image: ${TP2_IMAGEN:-cerberusdistribuido/tp2-servidor-hit2:dev}
     environment:
       TP2_IMAGENES_PERMITIDAS: ${TP2_IMAGENES_PERMITIDAS:?definir TP2_IMAGENES_PERMITIDAS en .env}
       TP2_WORKERS_MAX: ${TP2_WORKERS_MAX:-4}

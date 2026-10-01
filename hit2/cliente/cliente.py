@@ -25,7 +25,7 @@ class ClienteHit2:
         self,
         calculo: str,
         parametros: dict[str, Any],
-        imagen: str = "cerberus/tarea:1.0.0",
+        imagen: str = "cerberusdistribuido/tarea:1.0.0",
         datos: Optional[dict[str, Any]] = None,
         timeout: float = 60.0
     ) -> dict[str, Any]:
@@ -98,3 +98,32 @@ class ClienteHit2:
             self.reloj_lamport = max(self.reloj_lamport, ts_remoto) + 1
 
         return respuesta
+
+
+def main():
+    import argparse
+    import os
+    import sys
+
+    parser = argparse.ArgumentParser(description="Cliente del Hit 2 con Relojes de Lamport")
+    parser.add_argument("calculo", help="suma, resta, multiplicacion o division")
+    parser.add_argument("parametros", type=json.loads, help="objeto JSON, p. ej. '{\"a\": 3, \"b\": 4}'")
+    parser.add_argument("--datos", type=json.loads, default={}, help="objeto JSON con datos adicionales")
+    parser.add_argument("--imagen", default="cerberusdistribuido/tarea:1.0.0", help="imagen Docker de la tarea")
+    parser.add_argument("--servidor", default=os.environ.get("TP2_SERVIDOR", "http://localhost:8080"))
+    args = parser.parse_args()
+
+    cliente = ClienteHit2(args.servidor)
+    try:
+        resp = cliente.enviar_tarea(args.calculo, args.parametros, imagen=args.imagen, datos=args.datos)
+    except urllib.error.URLError as error:
+        sys.exit(f"no se pudo conectar con {args.servidor}: {error.reason}")
+
+    print(json.dumps(resp, ensure_ascii=False, indent=2))
+    return 0 if resp.get("codigo") == 200 else 1
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
+

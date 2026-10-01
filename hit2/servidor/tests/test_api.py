@@ -12,7 +12,7 @@ from app.config import Config
 from app.errores import ErrorApi, TipoError
 from app.main import crear_app
 
-VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "datos": {}, "imagen": "cerberus/tarea:1.0"}
+VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "datos": {}, "imagen": "cerberusdistribuido/tarea:1.0"}
 
 
 class LanzadorFalso:
@@ -35,7 +35,7 @@ class LanzadorFalso:
 @pytest.fixture
 def armar(tmp_path):
     def _armar(lanzador=None, **cambios):
-        opciones = {"dir_logs": str(tmp_path), "imagenes_permitidas": ("cerberus/tarea",), **cambios}
+        opciones = {"dir_logs": str(tmp_path), "imagenes_permitidas": ("cerberusdistribuido/tarea",), **cambios}
         lanzador = lanzador or LanzadorFalso()
         return TestClient(crear_app(Config(**opciones), lanzador), raise_server_exceptions=False), lanzador
     return _armar
@@ -75,7 +75,7 @@ def test_ejecuta_la_tarea_y_devuelve_el_resultado(armar):
     assert "lamport_ts" in contenido
     assert "X-Lamport-Clock" in res.headers
     # La imagen llega normalizada y el trabajo, tal cual.
-    assert lanzador.llamadas == [("docker.io/cerberus/tarea:1.0", "suma", {"a": 3, "b": 4}, {})]
+    assert lanzador.llamadas == [("docker.io/cerberusdistribuido/tarea:1.0", "suma", {"a": 3, "b": 4}, {})]
 
 
 def test_datos_es_opcional(armar):
@@ -110,7 +110,7 @@ def test_cuerpo_demasiado_grande_es_413(armar):
 @pytest.mark.parametrize("cambios, campo, problema", [
     ({"calculo": None}, "calculo", "no puede ser null"),
     ({"parametros": "a=1"}, "parametros", "tiene que ser un objeto"),
-    ({"imagen": "cerberus/tarea"}, "imagen", "latest"),
+    ({"imagen": "cerberusdistribuido/tarea"}, "imagen", "latest"),
     ({"password": "x"}, "password", "campo no permitido"),
 ])
 def test_payload_invalido_es_422_con_detalle(armar, cambios, campo, problema):
