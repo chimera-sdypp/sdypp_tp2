@@ -12,7 +12,8 @@ name: tp2-hit1
 services:
   servidor:
     build: ./servidor
-    image: cerberusdistribuido/tp2-servidor:dev
+    # En la VM, la imagen que publica el CI en GHCR (ver "Despliegue" en el README).
+    image: ${TP2_IMAGEN:-cerberusdistribuido/tp2-servidor:dev}
     environment:
       TP2_IMAGENES_PERMITIDAS: ${TP2_IMAGENES_PERMITIDAS:?definir TP2_IMAGENES_PERMITIDAS en .env}
       TP2_TIMEOUT_EJECUCION: ${TP2_TIMEOUT_EJECUCION:-60}

@@ -114,8 +114,8 @@ sequenceDiagram
 **Qué hicimos: configuración previa en el host con un token de sólo lectura.** El cliente nunca
 manda ni conoce credenciales: el payload no las acepta (un campo `password` es un `422`). El
 servidor usa un **token de acceso de Docker Hub con permiso sólo de lectura** (no la contraseña de
-la cuenta) que el operador pone en el `.env` del host; en el deploy lo inyecta el CD desde **GitHub
-Secrets**. Compose lo monta como archivo en `/run/secrets/registry_token` y el servidor se lo pasa
+la cuenta) que el operador pone una sola vez en el `.env` del host (en la VM,
+`/opt/sdypp-tp2-hit1/.env`, con permisos `600`): no pasa por GitHub ni por el CD. Compose lo monta como archivo en `/run/secrets/registry_token` y el servidor se lo pasa
 al daemon en cada pull, **sólo si la imagen es de Docker Hub**.
 
 Por qué es más seguro que mandar usuario y contraseña en el JSON:
@@ -171,6 +171,37 @@ con una versión fija (tag o digest; `latest` no).
 - **SDK de Docker y no el CLI:** le habla directo al socket, así la imagen no trae el binario de
   `docker`.
 
+## Despliegue
+
+Público en **http://18.231.127.74:8081/health**, en la misma VM de AWS EC2 que el TP1 (que sigue en
+el 8080).
+
+```mermaid
+flowchart LR
+    G["GitHub Actions<br/>push a main"] -- "tests en verde ⇒<br/>publica la imagen" --> R[(GHCR)]
+    subgraph VM[VM AWS EC2]
+        T["timer de systemd<br/>cada minuto"] -- "compose pull + up -d" --> S[Servidor :8081]
+    end
+    T -- "¿hay imagen nueva?" --> R
+```
+
+- En cada push a `main`, después de gitleaks y los tests, el CI publica la imagen del servidor en
+  GHCR (`ghcr.io/mnomico/sdypp_tp2-hit1`) con el `GITHUB_TOKEN` efímero del job.
+- En la VM, un timer de systemd hace `docker compose pull && up -d` cada minuto: la VM trae sola
+  la imagen nueva. GitHub no tiene ninguna credencial de la VM y el SSH no queda abierto a Internet.
+- El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales. Lo cambia el
+  dueño del repositorio una sola vez, en *Package settings → Change visibility*.
+
+Instalarlo en una VM Ubuntu con Docker:
+
+```bash
+scp -i clave.pem hit1/despliegue/instalar_vm.sh hit1/docker-compose.yml ubuntu@<IP>:
+ssh -i clave.pem ubuntu@<IP>
+# en la VM: crear ~/.env como el .env.example, con TP2_PUERTO=8081 y
+#   TP2_IMAGEN=ghcr.io/mnomico/sdypp_tp2-hit1:latest; después:
+sudo bash instalar_vm.sh && rm ~/.env
+```
+
 ## Configuración
 
 Variables de entorno (las principales están en [`.env.example`](.env.example)):
@@ -180,4 +211,4 @@ Variables de entorno (las principales están en [`.env.example`](.env.example)):
 
 ## Pendiente
 
-- CD, despliegue público y tests contra lo desplegado.
+- Tests contra lo desplegado.
