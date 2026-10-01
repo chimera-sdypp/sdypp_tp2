@@ -6,7 +6,7 @@ from app.errores import ErrorApi, TipoError
 from app.validacion import validar_solicitud
 
 JSON = "application/json"
-VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberus/tarea:1.0"}
+VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0"}
 
 
 def _cuerpo(objeto):
@@ -100,8 +100,8 @@ def test_campos_faltantes():
     ("parametros", "a=1", "tiene que ser un objeto, llegó un string"),
     ("parametros", [1, 2], "tiene que ser un objeto, llegó un array"),
     ("datos", None, "no puede ser null"),
-    ("imagen", "cerberus/tarea", "latest implícito"),
-    ("imagen", "cerberus/tarea:latest", "latest"),
+    ("imagen", "cerberusdistribuido/tarea", "latest implícito"),
+    ("imagen", "cerberusdistribuido/tarea:latest", "latest"),
     ("imagen", 12.5, "tiene que ser un string, llegó un número"),
 ])
 def test_campo_invalido_dice_exactamente_que_paso(campo, valor, problema):

@@ -4,8 +4,8 @@ El cliente elige qué imagen corre el servidor, y el servidor la corre con acces
 al daemon de Docker: sin una lista blanca, cualquiera ejecutaría lo que quisiera
 en el host. Sólo pasan los repositorios configurados; sin configurar, ninguno.
 
-Los nombres se normalizan como lo hace Docker (`cerberus/tarea` →
-`docker.io/cerberus/tarea`), para que la lista y Docker hablen de lo mismo.
+Los nombres se normalizan como lo hace Docker (`cerberusdistribuido/tarea` →
+`docker.io/cerberusdistribuido/tarea`), para que la lista y Docker hablen de lo mismo.
 """
 
 import re
@@ -51,7 +51,8 @@ class Imagen:
 
 
 def _normalizar_nombre(nombre):
-    """`cerberus/tarea` → ("docker.io", "cerberus/tarea"); `python` → ("docker.io", "library/python")."""
+    """`cerberusdistribuido/tarea` → ("docker.io", "cerberusdistribuido/tarea");
+    `python` → ("docker.io", "library/python")."""
     partes = nombre.split("/")
     es_registry = "." in partes[0] or ":" in partes[0] or partes[0] == "localhost"
     if len(partes) > 1 and es_registry:
@@ -67,7 +68,7 @@ def _normalizar_nombre(nombre):
 
 
 def parsear(texto):
-    """Convierte `cerberus/tarea:1.0` en una `Imagen`, o lanza `ImagenInvalida`.
+    """Convierte `cerberusdistribuido/tarea:1.0` en una `Imagen`, o lanza `ImagenInvalida`.
 
     Exige una versión fija (tag distinto de `latest`, o digest): con `latest` la
     misma petición puede correr código distinto de un día al otro.

@@ -1,7 +1,8 @@
-name: CI
+name: CI/CD
 
-# gitleaks y los tests en cada push y cada PR. El despliegue (CD) se suma
-# cuando esté definido dónde corre el servidor.
+# gitleaks y los tests en cada push y cada PR. En push a main, además, se publica la
+# imagen del servidor en GHCR, la VM la trae sola (ver "Despliegue" en hit1/README.md) y
+# se prueba lo desplegado con el cliente.
 on:
   push:
   pull_request:
@@ -37,6 +38,9 @@ jobs:
         run: python -m compileall -q app tests
       - name: Tests
         run: python -m pytest -v
+      - name: Tests del servicio tarea
+        working-directory: hit1/tarea
+        run: python -m pytest -v
 
   hit1-integracion:
     name: Hit 1 — integración con Docker
@@ -53,3 +57,47 @@ jobs:
       # tests contra Docker real y baja todo.
       - name: Levantar y probar
         run: PYTHON=python hit1/servidor/tests/integracion.sh
+
+  hit1-imagen:
+    name: Hit 1 — publicar la imagen del servidor
+    runs-on: ubuntu-latest
+    needs: [gitleaks, hit1-integracion]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write   # GHCR con el GITHUB_TOKEN efímero del job: ningún secret cargado a mano
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir y publicar en GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          imagen="ghcr.io/${GITHUB_REPOSITORY,,}-hit1"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            -t "$imagen:$GITHUB_SHA" -t "$imagen:latest" hit1/servidor
+          docker push "$imagen:$GITHUB_SHA"
+          docker push "$imagen:latest"
+          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en menos de un minuto."
+
+  hit1-desplegado:
+    name: Hit 1 — prueba contra lo desplegado
+    runs-on: ubuntu-latest
+    needs: hit1-imagen
+    env:
+      TP2_SERVIDOR: ${{ vars.TP2_HIT1_URL || 'http://18.231.127.74:8081' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mandar tareas al servidor público con el cliente
+        run: |
+          cliente() { python3 hit1/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
+          # La VM levanta la imagen nueva en hasta un minuto: se reintenta hasta 3 minutos.
+          for intento in $(seq 12); do
+            cliente suma '{"a": 3, "b": 4}' > suma.json && break
+            sleep 15
+          done
+          cat suma.json
+          grep -q '"resultado": 7' suma.json
+          cliente division '{"a": 1, "b": 0}' > division.json || true
+          cat division.json
+          grep -q '"codigo": 422' division.json
