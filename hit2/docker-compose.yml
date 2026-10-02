@@ -1,0 +1,43 @@
+# Hit 2 — Servidor de tareas remotas con Concurrencia, Worker Pool y Relojes de Lamport.
+
+name: tp2-hit2
+
+services:
+  servidor:
+    build: ./servidor
+    image: ${TP2_IMAGEN:-cerberusdistribuido/tp2-servidor-hit2:dev}
+    environment:
+      TP2_IMAGENES_PERMITIDAS: ${TP2_IMAGENES_PERMITIDAS:?definir TP2_IMAGENES_PERMITIDAS en .env}
+      TP2_WORKERS_MAX: ${TP2_WORKERS_MAX:-4}
+      TP2_TIMEOUT_EJECUCION: ${TP2_TIMEOUT_EJECUCION:-60}
+      TP2_REGISTRY_USUARIO: ${TP2_REGISTRY_USUARIO:-}
+
+      # El token llega como archivo (secret) y no como variable: no aparece en `docker inspect`.
+      TP2_REGISTRY_TOKEN_ARCHIVO: /run/secrets/registry_token
+    secrets:
+      - registry_token
+    ports:
+      - "${TP2_PUERTO:-8080}:8080"
+    volumes:
+      # Para crear los contenedores tarea le habla al daemon del host por su socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - logs:/app/logs
+    group_add:
+      - "${DOCKER_GID:?definir DOCKER_GID en .env: stat -c %g /var/run/docker.sock}"
+    networks:
+      - publica
+      - tareas
+
+networks:
+  publica: {}
+  tareas:
+    # Nombre fijo: el servidor conecta ahí los contenedores tarea.
+    name: tp2-tareas
+
+volumes:
+  logs: {}
+
+secrets:
+  # Vacía en .env ⇒ compose no crea el archivo y el servidor hace pulls anónimos.
+  registry_token:
+    environment: TP2_REGISTRY_TOKEN
