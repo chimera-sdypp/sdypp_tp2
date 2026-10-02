@@ -18,9 +18,6 @@ class ClienteHit2:
         self.base_url = base_url.rstrip("/")
         self.reloj_lamport = reloj_inicial
 
-    def _incrementar_reloj() -> int:
-        pass
-
     def enviar_tarea(
         self,
         calculo: str,

@@ -42,8 +42,10 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
         if header_ts and header_ts.isdigit():
             ts_cliente = int(header_ts)
 
-        ts_local = reloj.actualizar(ts_cliente)
-        request.state.lamport_ts = ts_local
+        # Recepción: L = max(L, L_cliente) + 1. La cola ordena por el timestamp del
+        # cliente (el del envío), que es el que respeta el orden de Lamport entre clientes.
+        reloj.actualizar(ts_cliente)
+        request.state.ts_cliente = ts_cliente
 
         try:
             respuesta = await call_next(request)
@@ -51,9 +53,10 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             log.exception("%s %s | error inesperado", request.method, request.url.path)
             respuesta = responder_error(ErrorApi(TipoError.ERROR_INTERNO, "error interno del servidor"))
 
-        # Adjuntar reloj de Lamport actualizado a la respuesta
-        ts_salida = reloj.incrementar()
-        respuesta.headers["X-Lamport-Clock"] = str(ts_salida)
+        # Envío: si el handler no puso el reloj (lo pone junto con el cuerpo), se pone acá.
+        if "x-lamport-clock" not in respuesta.headers:
+            respuesta.headers["X-Lamport-Clock"] = str(reloj.incrementar())
+        ts_salida = int(respuesta.headers["x-lamport-clock"])
 
         log.info("%s %s | %d | %.0f ms | lamport_ts=%d", request.method, request.url.path,
                  respuesta.status_code, (time.perf_counter() - inicio) * 1000, ts_salida)
@@ -92,7 +95,7 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             raise ErrorApi(TipoError.IMAGEN_NO_PERMITIDA,
                            f"la imagen {imagen.nombre} no está en la lista de imágenes permitidas")
 
-        ts_solicitud = getattr(request.state, "lamport_ts", reloj.valor)
+        ts_solicitud = request.state.ts_cliente
         log.info("tarea | %s | calculo=%s | lamport_ts=%d", imagen.referencia, solicitud.calculo, ts_solicitud)
 
         # Encolar en el pool de workers (con exclusión mutua y ordenamiento Lamport)
@@ -119,7 +122,7 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
     @app.get("/health")
     def health():
         docker_ok = lanzador.disponible()
-        ts_respuesta = reloj.obtener()
+        ts_respuesta = reloj.incrementar()
         return responder(
             200 if docker_ok else 503,
             {

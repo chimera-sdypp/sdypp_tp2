@@ -78,6 +78,32 @@ def test_ejecuta_la_tarea_y_devuelve_el_resultado(armar):
     assert lanzador.llamadas == [("docker.io/cerberusdistribuido/tarea:1.0", "suma", {"a": 3, "b": 4}, {})]
 
 
+def test_reloj_de_lamport_en_la_respuesta(armar):
+    cliente, _ = armar()
+    res = _post(cliente, VALIDO, headers={"X-Lamport-Clock": "41"})
+    # Recepción: max(0, 41) + 1 = 42. Envío: 43, el mismo en el cuerpo y en la cabecera.
+    assert _sobre(res, 200)["lamport_ts"] == 43
+    assert res.headers["X-Lamport-Clock"] == "43"
+
+
+def test_la_cola_recibe_el_timestamp_del_cliente(tmp_path):
+    """La cola ordena por el timestamp del envío del cliente, no por el del servidor al recibir."""
+    recibidos = []
+
+    class PoolFalso:
+        workers_max, workers_activos, tareas_encoladas = 1, 0, 0
+
+        def ejecutar_tarea(self, imagen, calculo, parametros, datos, lamport_ts=0):
+            recibidos.append(lamport_ts)
+            return 7
+
+    config = Config(dir_logs=str(tmp_path), imagenes_permitidas=("cerberusdistribuido/tarea",))
+    cliente = TestClient(crear_app(config, LanzadorFalso(), pool=PoolFalso()))
+    _post(cliente, VALIDO, headers={"X-Lamport-Clock": "100"})
+    _post(cliente, VALIDO, headers={"X-Lamport-Clock": "5"})
+    assert recibidos == [100, 5]
+
+
 def test_datos_es_opcional(armar):
     cliente, lanzador = armar()
     _sobre(_post(cliente, {k: v for k, v in VALIDO.items() if k != "datos"}), 200)

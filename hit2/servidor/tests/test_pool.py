@@ -9,9 +9,17 @@ from app.pool import PoolWorkers
 
 def test_pool_limite_workers():
     lanzador_mock = MagicMock()
-    # Simular una ejecución que demora 0.1s
+    # Simula una ejecución de 0.1 s y registra cuántas corren a la vez.
+    activas, maximo, candado = 0, 0, threading.Lock()
+
     def _ejecutar(imagen, calculo, parametros, datos):
+        nonlocal activas, maximo
+        with candado:
+            activas += 1
+            maximo = max(maximo, activas)
         time.sleep(0.1)
+        with candado:
+            activas -= 1
         return {"resultado": 42}
 
     lanzador_mock.ejecutarTareaRemota.side_effect = _ejecutar
@@ -29,12 +37,10 @@ def test_pool_limite_workers():
     for h in hilos:
         h.start()
 
-    # Dar un pequeño tiempo para verificar que nunca hay más de 2 workers activos
-    time.sleep(0.05)
-    assert pool.workers_activos <= 2
-
     for h in hilos:
         h.join()
+
+    assert maximo == 2   # nunca más de 2 a la vez, y el pool usa los 2
 
     assert len(resultados) == 5
     assert pool.workers_activos == 0
