@@ -2,7 +2,7 @@
 
 Servidor HTTP de tareas remotas extender con **concurrencia multihilo**, **pool de workers configurable**, **cola de tareas con exclusión mutua (Mutex)** y **relojes lógicos de Lamport [LAM78]**.
 
-Incluye mediciones empíricas y análisis teórico de escalabilidad mediante la **Ley de Amdahl [AMD67]**.
+Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis con la **Ley de Amdahl [AMD67]**.
 
 ---
 
@@ -36,7 +36,7 @@ Incluye mediciones empíricas y análisis teórico de escalabilidad mediante la 
 2. **Pool de Workers y Cola Protegida (`app/pool.py`)**:
    - **Límite máximo configurable**: definido por `TP2_WORKERS_MAX` (por defecto `4`).
    - **Exclusión Mutua**: Toda operación sobre la cola (`encolar`, `despachar`, `liberar worker`) requiere la adquisición de un **Mutex interno** (`threading.Lock()`), garantizando cero condiciones de carrera (*race conditions*).
-   - **Ordenamiento lógico**: La cola utiliza una min-heap donde las tareas se ordenan por su timestamp de Lamport. Ante igualdad de timestamp, se aplica FIFO.
+   - **Ordenamiento lógico**: La cola utiliza una min-heap donde las tareas se ordenan por el timestamp de Lamport **del cliente** (`X-Lamport-Clock` del pedido, el del evento de envío). Ante igualdad de timestamp, se aplica FIFO. Si se ordenara por el reloj del servidor al recibir, como ese crece con cada llegada, el orden sería el de llegada y el reloj no aportaría nada.
 
 3. **Cliente con Reloj Lamport (`cliente/cliente.py`)**:
    - Cliente Python que incrementa su timestamp en cada envío y sincroniza su reloj local con la respuesta del servidor.
@@ -91,57 +91,86 @@ python3 -m pytest -v -m "not integracion"
 ./tests/integracion.sh             # integración con Docker real
 ```
 
-### Paso 4: Ejecutar Mediciones de Throughput (Benchmark)
+### Paso 4: Medir el throughput con 1, 2, 4 y 8 workers
 ```bash
 cd hit2
-# Medición contra servidor en vivo:
-python3 cliente/benchmark.py --servidor http://localhost:8080
-
-# O evaluar mediante el modelo analítico experimental:
-python3 cliente/benchmark.py --simulado
+cp .env.example .env        # completar, con el token de Docker Hub de sólo lectura
+pip install matplotlib
+python3 cliente/benchmark.py
 ```
+Para cada N, el script reinicia el servidor con `TP2_WORKERS_MAX=N`, le manda 32 tareas a la vez
+(la cola nunca se vacía), repite la medición 3 veces y guarda la tabla en
+`mediciones/resultados_benchmark.json` y la curva en `mediciones/escalabilidad.png`.
 
 ---
 
 ## 3. Mediciones de Throughput y Análisis de Escalabilidad
 
-Las mediciones evaluaron el throughput del sistema (**tareas completadas por minuto - TPM**) variando la cantidad de workers asignados en el Pool ($N \in \{1, 2, 4, 8\}$).
+Medido con `cliente/benchmark.py` (Paso 4): para cada $N$ se reinició el servidor con
+`TP2_WORKERS_MAX=N` y se le mandaron **32 tareas a la vez** (sumas), **3 repeticiones** por $N$.
+Todo en una misma máquina: AMD Ryzen 5 3600 (6 núcleos / 12 hilos), 31 GB de RAM, Docker 29.8,
+Linux 7.2. Los datos crudos están en [`mediciones/resultados_benchmark.json`](mediciones/resultados_benchmark.json).
 
-### Tabla de Resultados Medidos
+### Tabla de resultados
 
-| Cantidad de Workers ($N$) | Tareas Completadas | Tiempo Total (s) | Throughput (Tareas/min) | Speedup Medido ($S_{real}$) | Speedup Teórico (Amdahl $P=85\%$) | Speedup Ideal ($S=N$) |
+| Workers ($N$) | Tiempo para 32 tareas (prom. ± desvío) | Throughput (tareas/min) | Latencia media por tarea | Speedup medido | Amdahl ajustada ($P = 0{,}937$) | Ideal |
 |---|---|---|---|---|---|---|
-| **1 Worker** | 16 | 21.44 s | **44.78 tpm** | **1.00x** | 1.00x | 1.00x |
-| **2 Workers** | 16 | 11.84 s | **81.08 tpm** | **1.81x** | 1.74x | 2.00x |
-| **4 Workers** | 16 | 7.52 s | **127.66 tpm** | **2.85x** | 2.76x | 4.00x |
-| **8 Workers** | 16 | 5.36 s | **179.10 tpm** | **4.00x** | 3.90x | 8.00x |
+| 1 | 26,67 s ± 2,66 | **72** | 14,4 s | **1,00x** | 1,00x | 1x |
+| 2 | 15,02 s ± 2,81 | **128** | 7,7 s | **1,78x** | 1,88x | 2x |
+| 4 | 7,32 s ± 0,25 | **262** | 4,1 s | **3,64x** | 3,36x | 4x |
+| 8 | 4,88 s ± 0,12 | **393** | 3,0 s | **5,46x** | 5,55x | 8x |
+
+![Curva de escalabilidad](mediciones/escalabilidad.png)
+
+- Con 1 worker cada tarea cuesta **~0,83 s** (26,67 s / 32): casi todo es el ciclo de vida del
+  contenedor (crear, arrancar, esperar su `/health`, borrarlo). La suma en sí tarda microsegundos.
+- La **latencia media** cae de 14,4 s a 3,0 s: con pocos workers, la mayor parte del tiempo de
+  cada pedido es **espera en la cola**.
+- El speedup **no es lineal**: de 4 a 8 workers el throughput sube un 50 %, no un 100 %.
 
 ---
 
 ## 4. Análisis de la Ley de Amdahl [AMD67]
 
-La **Ley de Amdahl** establece el límite teórico del *Speedup* ($S$) de un sistema cuando se aumenta la cantidad de procesadores/workers ($N$):
-
 $$S(N) = \frac{1}{(1 - P) + \frac{P}{N}}$$
 
-Donde:
-- $P$: Fracción de la tarea que es estrictamente **paralelizable** (ejecución remota dentro del contenedor Docker).
-- $(1 - P)$: Fracción **secuencial** u obligatoriamente serializada del sistema.
+$P$ es la fracción del trabajo que se puede hacer en paralelo y $1 - P$ la que queda serializada.
+En vez de suponer $P$, el benchmark la **ajusta a los speedups medidos** (mínimos cuadrados):
+**$P \approx 0{,}937$**, es decir, ~6 % del trabajo por tarea queda serializado. La curva ajustada
+predice 5,55x para 8 workers y se midió 5,46x.
 
-### Fracción Secuencial $(1 - P)$ Identificada en el Sistema:
-1. **Adquisición del Mutex de la Cola de Tareas**: La inserción y extracción en la cola compartida bajo exclusión mutua se ejecuta secuencialmente.
-2. **IPC con el Socket de Docker (`/var/run/docker.sock`)**: El daemon de Docker serializa internamente ciertas peticiones de creación e inicialización de contenedores (`containers.create` y `start`).
-3. **Parseo y Validación HTTP en Servidor FastAPI**: Sincronización del Reloj de Lamport y validación de tipos JSON.
+Con ese $P$, el techo teórico es:
 
-Con una fracción paralelizable $P \approx 85\%$, el speedup máximo teórico asíntotico cuando $N \to \infty$ está limitado por:
+$$\lim_{N \to \infty} S(N) = \frac{1}{1 - 0{,}937} \approx 15{,}9\text{x}$$
 
-$$\lim_{N \to \infty} S(N) = \frac{1}{1 - 0.85} = 6.67\text{x}$$
+aunque, por lo que muestra la sección 5, en esta máquina se llegaría antes a saturar la CPU.
 
-Esto demuestra por qué pasar de 4 a 8 workers no duplica el rendimiento (4.00x de speedup en lugar de 8.00x ideal).
+Qué queda serializado ($1 - P$):
+1. **El daemon de Docker**: crear, arrancar y borrar contenedores pasa por un único `dockerd`, que
+   serializa parte de ese trabajo con locks internos (red, cgroups, capas).
+2. **La sección crítica de la cola**: encolar y despachar bajo el mutex del pool (es mínima: sólo
+   operaciones sobre la heap).
+3. **El servidor HTTP**: recibir, validar y responder cada pedido.
 
 ---
 
 ## 5. Cuellos de Botella en Recursos Compartidos (Single-Host)
+
+**Lo que se midió** durante el benchmark (muestras con `top` cada ~3 s, agrupadas por la cantidad de
+contenedores tarea corriendo en ese momento; el uso de un proceso es sobre un núcleo, puede pasar
+del 100 %):
+
+| Contenedores tarea a la vez | CPU total de la máquina | `dockerd` | `containerd` + shims |
+|---|---|---|---|
+| 1 | 18 % | 11 % | 5 % |
+| 2 | 29 % | 29 % | 15 % |
+| 3–4 | 52 % | 59 % | 28 % |
+| 5–8 | 79 % | 93 % | 46 % |
+
+El uso de CPU de `dockerd` crece con la concurrencia y con 8 workers ya ocupa casi un núcleo
+entero: el daemon es el primer cuello de botella. Además, la CPU total llega a ~80 %, porque cada
+tarea arranca un contenedor nuevo con su propio intérprete de Python. (Con 8 workers la fase dura
+pocos segundos y hay pocas muestras: el número es orientativo.)
 
 Al ejecutar tanto el cliente, el servidor FastAPI y todos los contenedores de workers en un solo equipo host, los siguientes recursos compartidos se convierten en potenciales cuellos de botella:
 

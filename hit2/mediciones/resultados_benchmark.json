@@ -1,42 +1,39 @@
 {
-  "1": {
-    "workers": 1,
-    "tareas_completadas": 16,
-    "tiempo_segundos": 21.44,
-    "throughput_tpm": 44.78,
-    "throughput_tps": 0.75,
-    "speedup_real": 1.0,
-    "speedup_amdahl": 1.0,
-    "speedup_ideal": 1
-  },
-  "2": {
-    "workers": 2,
-    "tareas_completadas": 16,
-    "tiempo_segundos": 11.84,
-    "throughput_tpm": 81.08,
-    "throughput_tps": 1.35,
-    "speedup_real": 1.81,
-    "speedup_amdahl": 1.74,
-    "speedup_ideal": 2
-  },
-  "4": {
-    "workers": 4,
-    "tareas_completadas": 16,
-    "tiempo_segundos": 7.52,
-    "throughput_tpm": 127.66,
-    "throughput_tps": 2.13,
-    "speedup_real": 2.85,
-    "speedup_amdahl": 2.76,
-    "speedup_ideal": 4
-  },
-  "8": {
-    "workers": 8,
-    "tareas_completadas": 16,
-    "tiempo_segundos": 5.36,
-    "throughput_tpm": 179.1,
-    "throughput_tps": 2.99,
-    "speedup_real": 4.0,
-    "speedup_amdahl": 3.9,
-    "speedup_ideal": 8
-  }
+  "tareas_por_medicion": 32,
+  "repeticiones": 3,
+  "fraccion_paralela_amdahl": 0.937,
+  "resultados": [
+    {
+      "workers": 1,
+      "segundos": 26.67,
+      "desvio_segundos": 2.66,
+      "throughput_tpm": 72.0,
+      "latencia_media_s": 14.4,
+      "speedup": 1.0
+    },
+    {
+      "workers": 2,
+      "segundos": 15.02,
+      "desvio_segundos": 2.81,
+      "throughput_tpm": 127.9,
+      "latencia_media_s": 7.71,
+      "speedup": 1.78
+    },
+    {
+      "workers": 4,
+      "segundos": 7.32,
+      "desvio_segundos": 0.25,
+      "throughput_tpm": 262.2,
+      "latencia_media_s": 4.14,
+      "speedup": 3.64
+    },
+    {
+      "workers": 8,
+      "segundos": 4.88,
+      "desvio_segundos": 0.12,
+      "throughput_tpm": 393.3,
+      "latencia_media_s": 2.99,
+      "speedup": 5.46
+    }
+  ]
 }

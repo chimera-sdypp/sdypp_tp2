@@ -74,7 +74,7 @@ Cabeceras obligatorias:
 
 - **Límite configurable**: `TP2_WORKERS_MAX` (por defecto `4`).
 - **Exclusión mutua**: La cola de tareas está protegida por un **Mutex**. Toda asignación de tareas a un worker se realiza en una sección crítica para evitar race conditions.
-- **Orden de la cola**: Las tareas en espera se despachan ordenadas por menor **timestamp de Lamport** (y FIFO en caso de empate).
+- **Orden de la cola**: Las tareas en espera se despachan ordenadas por menor **timestamp de Lamport del cliente** (el `X-Lamport-Clock` del pedido, que marca el evento de envío), y FIFO en caso de empate. No se usa el reloj del servidor al recibir: ese crece con cada llegada y daría el mismo orden que la llegada.
 
 ---
 
