@@ -17,10 +17,11 @@ class RelojFalso:
 
 
 class ContenedorFalso:
-    def __init__(self, imagen, network, falla_start=False):
+    def __init__(self, imagen, network, falla_start=False, labels=None):
         self.id = "abc123"
         self.imagen = imagen
         self.network = network
+        self.labels = labels or {}
         self.falla_start = falla_start
         self.attrs = {"NetworkSettings": {"Networks": {network: {"IPAddress": "172.30.0.5"}}}}
         self.borrado = False
@@ -60,10 +61,14 @@ class DockerFalso:
         if self.error_pull:
             raise self.error_pull
 
-    def create(self, imagen, network=None):
-        contenedor = ContenedorFalso(imagen, network, self.falla_start)
+    def create(self, imagen, network=None, labels=None):
+        contenedor = ContenedorFalso(imagen, network, self.falla_start, labels)
         self.creados.append(contenedor)
         return contenedor
+
+    def list(self, all=False, filters=None):  # noqa: A002 (firma del SDK)
+        clave, _, valor = filters["label"].partition("=")
+        return [c for c in self.creados if not c.borrado and c.labels.get(clave) == valor]
 
 
 def sobre(codigo, contenido):

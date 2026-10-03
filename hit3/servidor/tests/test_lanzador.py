@@ -125,6 +125,20 @@ def test_error_inesperado_igual_borra_el_contenedor():
     assert docker_falso.creados[0].borrado
 
 
+# ---------------------------------------------------------------- huérfanos
+def test_los_contenedores_llevan_la_etiqueta_del_nodo_y_se_limpian_los_huerfanos():
+    docker_falso = DockerFalso(presentes={IMAGEN.referencia})
+    lanzador, _ = _lanzador(docker_falso, config=Config(nodo_id=2))
+    # Como si el nodo hubiera muerto en medio de la tarea: quedan dos sin borrar,
+    # uno suyo y uno de otro nodo.
+    propio = docker_falso.create("x", labels={"tp2.hit3.nodo": "2"})
+    ajeno = docker_falso.create("x", labels={"tp2.hit3.nodo": "3"})
+    assert lanzador.limpiar_huerfanos() == 1
+    assert propio.borrado and not ajeno.borrado
+    _ejecutar(lanzador)
+    assert docker_falso.creados[-1].labels == {"tp2.hit3.nodo": "2"}
+
+
 # ---------------------------------------------------------------- Docker caído
 def test_sin_docker_es_servicio_no_disponible():
     def fabrica():

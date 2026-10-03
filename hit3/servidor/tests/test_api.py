@@ -1,9 +1,12 @@
-"""Tests de la API contra el contrato (hit1/contrato.md), con un lanzador falso.
+"""Tests de la API contra el contrato (hit3/contrato.md), con un lanzador falso.
+
+Un nodo solo (sin pares): al arrancar gana su propia elección y ejecuta todo él.
 
 Cada test afirma el **código** y el **sobre**, no sólo que "contestó".
 """
 
 import logging
+from contextlib import ExitStack
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,14 +34,22 @@ class LanzadorFalso:
     def disponible(self):
         return self._disponible
 
+    def limpiar_huerfanos(self):
+        return 0
+
 
 @pytest.fixture
 def armar(tmp_path):
-    def _armar(lanzador=None, **cambios):
-        opciones = {"dir_logs": str(tmp_path), "imagenes_permitidas": ("cerberusdistribuido/tarea",), **cambios}
-        lanzador = lanzador or LanzadorFalso()
-        return TestClient(crear_app(Config(**opciones), lanzador), raise_server_exceptions=False), lanzador
-    return _armar
+    with ExitStack() as pila:
+        def _armar(lanzador=None, **cambios):
+            opciones = {"dir_logs": str(tmp_path), "imagenes_permitidas": ("cerberusdistribuido/tarea",),
+                        **cambios}
+            lanzador = lanzador or LanzadorFalso()
+            app = crear_app(Config(**opciones), lanzador)
+            # Con `with` corre el ciclo de vida: la elección y el hilo de heartbeats.
+            cliente = pila.enter_context(TestClient(app, raise_server_exceptions=False))
+            return cliente, lanzador
+        yield _armar
 
 
 def _sobre(respuesta, codigo, tipo=None):
@@ -68,7 +79,7 @@ def _post(cliente, cuerpo=None, **kwargs):
 # ---------------------------------------------------------------- caso feliz
 def test_ejecuta_la_tarea_y_devuelve_el_resultado(armar):
     cliente, lanzador = armar()
-    assert _sobre(_post(cliente, VALIDO), 200) == {"calculo": "suma", "resultado": 7}
+    assert _sobre(_post(cliente, VALIDO), 200) == {"calculo": "suma", "resultado": 7, "nodo": 1}
     # La imagen llega normalizada y el trabajo, tal cual.
     assert lanzador.llamadas == [("docker.io/cerberusdistribuido/tarea:1.0", "suma", {"a": 3, "b": 4}, {})]
 
@@ -156,12 +167,18 @@ def test_error_inesperado_es_500_generico(armar):
 # ---------------------------------------------------------------- health
 def test_health_ok(armar):
     cliente, _ = armar()
-    assert _sobre(cliente.get("/health"), 200) == {"servidor": "ok", "docker": "ok"}
+    contenido = _sobre(cliente.get("/health"), 200)
+    assert (contenido["servidor"], contenido["docker"]) == ("ok", "ok")
+    cluster = contenido["cluster"]
+    assert (cluster["nodo"], cluster["coordinador"], cluster["rol"], cluster["tareas_en_curso"]) == \
+        (1, 1, "coordinador", 0)
+    assert cluster["nodos"]["1"]["estado"] == "vivo"
 
 
 def test_health_sin_docker_es_503(armar):
     cliente, _ = armar(LanzadorFalso(disponible=False))
-    assert _sobre(cliente.get("/health"), 503) == {"servidor": "ok", "docker": "caido"}
+    contenido = _sobre(cliente.get("/health"), 503)
+    assert (contenido["servidor"], contenido["docker"]) == ("ok", "caido")
 
 
 # ---------------------------------------------------------------- rutas y métodos
@@ -190,3 +207,54 @@ def test_logs_en_disco_y_en_memoria(armar, tmp_path):
     memoria = next(h for h in logging.getLogger("tp2.servidor").handlers if hasattr(h, "registros"))
     assert any("POST /getRemoteTask | 200" in linea for linea in memoria.registros)
     assert "POST /getRemoteTask | 200" in (tmp_path / "servidor.log").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- entre nodos
+def test_eleccion_contesta_ok(armar):
+    cliente, _ = armar()
+    assert _sobre(cliente.post("/cluster/eleccion", json={"de": 1}), 200) == {"ok": 1}
+
+
+def test_coordinador_menor_es_rechazado(armar):
+    cliente, _ = armar(nodo_id=3)
+    _sobre(cliente.post("/cluster/coordinador", json={"de": 2}), 409, "COORDINADOR_RECHAZADO")
+
+
+def test_coordinador_mayor_es_aceptado(armar):
+    cliente, _ = armar()
+    assert _sobre(cliente.post("/cluster/coordinador", json={"de": 5}), 200) == {"coordinador": 5}
+    assert _sobre(cliente.get("/health"), 200)["cluster"]["rol"] == "worker"
+
+
+def test_heartbeat_y_asignacion_en_el_coordinador(armar):
+    cliente, _ = armar()
+    assert _sobre(cliente.post("/cluster/heartbeat", json={"de": 2, "tareas_en_curso": 0}), 200) == \
+        {"coordinador": 1}
+    assert _sobre(cliente.post("/cluster/asignar", json={"de": 2, "excluir": [1]}), 200) == {"nodo": 2}
+    _sobre(cliente.post("/cluster/asignar", json={"de": 2, "excluir": [1, 2]}), 503, "CLUSTER_NO_DISPONIBLE")
+
+
+def test_heartbeat_y_asignacion_en_un_no_coordinador_son_409(armar):
+    cliente, _ = armar()
+    cliente.post("/cluster/coordinador", json={"de": 5})
+    _sobre(cliente.post("/cluster/heartbeat", json={"de": 2, "tareas_en_curso": 0}), 409, "NO_ES_COORDINADOR")
+    _sobre(cliente.post("/cluster/asignar", json={"de": 2}), 409, "NO_ES_COORDINADOR")
+
+
+@pytest.mark.parametrize("ruta, cuerpo", [
+    ("/cluster/eleccion", {"de": "1"}),
+    ("/cluster/eleccion", {}),
+    ("/cluster/heartbeat", {"de": 1, "tareas_en_curso": -1}),
+    ("/cluster/coordinador", {"de": 1, "otro": 1}),
+])
+def test_mensajes_del_cluster_mal_formados_son_422(armar, ruta, cuerpo):
+    cliente, _ = armar()
+    _sobre(cliente.post(ruta, json=cuerpo), 422, "PAYLOAD_INVALIDO")
+
+
+def test_ejecutar_corre_local_con_las_mismas_validaciones(armar):
+    cliente, lanzador = armar()
+    assert _sobre(cliente.post("/cluster/ejecutar", json=VALIDO), 200) == {"resultado": 7, "nodo": 1}
+    _sobre(cliente.post("/cluster/ejecutar", json={**VALIDO, "imagen": "alguien/minero:1.0"}), 403,
+           "IMAGEN_NO_PERMITIDA")
+    assert len(lanzador.llamadas) == 1

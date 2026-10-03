@@ -16,6 +16,11 @@ from requests.exceptions import RequestException
 
 from app.errores import ErrorApi, TipoError
 
+# Etiqueta de los contenedores tarea: el nodo que los creó. Si a un nodo lo matan
+# con una tarea en curso, el `finally` no corre y el contenedor queda; al volver,
+# el nodo borra los que tienen su etiqueta.
+ETIQUETA_NODO = "tp2.hit3.nodo"
+
 # Errores de "no llego al daemon": socket ausente, sin permiso, daemon caído.
 _SIN_DOCKER = (DockerException, RequestException, OSError)
 
@@ -92,7 +97,8 @@ class Lanzador:
         try:
             # create + start por separado: si falla el start, `containers.run()`
             # deja el contenedor creado y no habría referencia para borrarlo.
-            contenedor = cliente.containers.create(imagen.referencia, network=self._config.red_tareas)
+            contenedor = cliente.containers.create(imagen.referencia, network=self._config.red_tareas,
+                                                   labels={ETIQUETA_NODO: str(self._config.nodo_id)})
             contenedor.start()
             base = f"http://{self._ip(contenedor)}:{self._config.tarea_puerto}"
             self._esperar_listo(base)
@@ -109,6 +115,20 @@ class Lanzador:
                     contenedor.remove(force=True)
                 except _SIN_DOCKER as error:
                     self._log.warning("no se pudo borrar el contenedor %s: %s", contenedor.id, error)
+
+    def limpiar_huerfanos(self):
+        """Borra los contenedores tarea que este nodo dejó al morir. Devuelve cuántos."""
+        filtro = {"label": f"{ETIQUETA_NODO}={self._config.nodo_id}"}
+        try:
+            huerfanos = self._docker().containers.list(all=True, filters=filtro)
+            for contenedor in huerfanos:
+                contenedor.remove(force=True)
+        except (ErrorApi, *_SIN_DOCKER) as error:
+            self._log.warning("no se pudieron limpiar los contenedores huérfanos: %s", error)
+            return 0
+        if huerfanos:
+            self._log.info("se borraron %d contenedores tarea huérfanos", len(huerfanos))
+        return len(huerfanos)
 
     def _asegurar_imagen(self, cliente, imagen):
         """Descarga la imagen si no está en el host, con las credenciales del
