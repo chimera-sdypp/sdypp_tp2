@@ -1,49 +1,99 @@
-# Hit 1 — servidor de tareas remotas.
+# Hit 3 — cluster de 3 nodos (el servidor del Hit 1 + elección Bully) detrás de nginx.
 #
 #   cp .env.example .env      # y completar DOCKER_GID y TP2_IMAGENES_PERMITIDAS
 #   docker compose up --build -d --wait
 #   curl -s localhost:8080/health
 #
-# Los contenedores tarea no se declaran acá: los crea el servidor en cada pedido,
-# en la red `tareas`, y los borra al terminar.
+# Sólo nginx publica un puerto. Los nodos se hablan entre sí por la red `cluster`
+# (/cluster/*), que no sale del host. Los contenedores tarea no se declaran acá:
+# los crea cada nodo en la red de tareas y los borra al terminar.
+#
+# Simular la caída del coordinador ("matar el proceso"):
+#   docker compose kill nodo3          # SIGKILL al proceso del nodo
+#   docker compose up -d nodo3         # vuelve y recupera el liderazgo
 
-name: tp2-hit1
+name: tp2-hit3
+
+x-nodo: &nodo
+  build: ./servidor
+  # En la VM, la imagen que publica el CI en GHCR (ver "Despliegue" en el README).
+  image: ${TP2_IMAGEN:-cerberusdistribuido/tp2-servidor-hit3:dev}
+  secrets:
+    - registry_token
+  volumes:
+    # Para crear los contenedores tarea le habla al daemon del host por su socket.
+    - /var/run/docker.sock:/var/run/docker.sock
+    - logs:/app/logs
+  group_add:
+    - "${DOCKER_GID:?definir DOCKER_GID en .env: stat -c %g /var/run/docker.sock}"
+  networks:
+    - cluster
+    - tareas
+
+x-entorno: &entorno
+  TP2_IMAGENES_PERMITIDAS: ${TP2_IMAGENES_PERMITIDAS:?definir TP2_IMAGENES_PERMITIDAS en .env}
+  TP2_TIMEOUT_EJECUCION: ${TP2_TIMEOUT_EJECUCION:-60}
+  TP2_REGISTRY_USUARIO: ${TP2_REGISTRY_USUARIO:-}
+  # El token llega como archivo (secret) y no como variable: no aparece en `docker inspect`.
+  TP2_REGISTRY_TOKEN_ARCHIVO: /run/secrets/registry_token
+  TP2_RED_TAREAS: tp2-hit3-tareas
+  TP2_INTERVALO_HEARTBEAT: ${TP2_INTERVALO_HEARTBEAT:-1}
+  TP2_VENCIMIENTO_NODO: ${TP2_VENCIMIENTO_NODO:-3}
 
 services:
-  servidor:
-    build: ./servidor
-    # En la VM, la imagen que publica el CI en GHCR (ver "Despliegue" en el README).
-    image: ${TP2_IMAGEN:-cerberusdistribuido/tp2-servidor:dev}
+  nodo1:
+    <<: *nodo
     environment:
-      TP2_IMAGENES_PERMITIDAS: ${TP2_IMAGENES_PERMITIDAS:?definir TP2_IMAGENES_PERMITIDAS en .env}
-      TP2_TIMEOUT_EJECUCION: ${TP2_TIMEOUT_EJECUCION:-60}
-      TP2_REGISTRY_USUARIO: ${TP2_REGISTRY_USUARIO:-}
-      # El token llega como archivo (secret) y no como variable: no aparece en `docker inspect`.
-      TP2_REGISTRY_TOKEN_ARCHIVO: /run/secrets/registry_token
-    secrets:
-      - registry_token
+      <<: *entorno
+      TP2_NODO_ID: 1
+      TP2_PARES: 2=http://nodo2:8080,3=http://nodo3:8080
+      TP2_DIR_LOGS: /app/logs/nodo1
+
+  nodo2:
+    <<: *nodo
+    environment:
+      <<: *entorno
+      TP2_NODO_ID: 2
+      TP2_PARES: 1=http://nodo1:8080,3=http://nodo3:8080
+      TP2_DIR_LOGS: /app/logs/nodo2
+
+  nodo3:
+    <<: *nodo
+    environment:
+      <<: *entorno
+      TP2_NODO_ID: 3
+      TP2_PARES: 1=http://nodo1:8080,2=http://nodo2:8080
+      TP2_DIR_LOGS: /app/logs/nodo3
+
+  nginx:
+    image: nginx:1.28-alpine
     ports:
-      - "${TP2_PUERTO:-8080}:8080"
+      - "${TP2_PUERTO:-8080}:80"
     volumes:
-      # Para crear los contenedores tarea le habla al daemon del host por su socket.
-      - /var/run/docker.sock:/var/run/docker.sock
-      - logs:/app/logs
-    group_add:
-      - "${DOCKER_GID:?definir DOCKER_GID en .env: stat -c %g /var/run/docker.sock}"
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - nodo1
+      - nodo2
+      - nodo3
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
     networks:
-      - publica
-      - tareas
+      - cluster
 
 networks:
-  publica: {}
+  cluster: {}
   tareas:
-    # Nombre fijo: el servidor conecta ahí los contenedores tarea.
-    name: tp2-tareas
+    # Nombre fijo: los nodos conectan ahí los contenedores tarea. Distinto del Hit 1
+    # (tp2-tareas) para que los dos puedan convivir en la misma VM.
+    name: tp2-hit3-tareas
 
 volumes:
   logs: {}
 
 secrets:
-  # Vacía en .env ⇒ compose no crea el archivo y el servidor hace pulls anónimos.
+  # Vacía en .env ⇒ compose no crea el archivo y los nodos hacen pulls anónimos.
   registry_token:
     environment: TP2_REGISTRY_TOKEN
