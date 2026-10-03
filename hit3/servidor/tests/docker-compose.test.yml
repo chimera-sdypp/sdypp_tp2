@@ -1,0 +1,6 @@
+# Sólo para los tests de integración: publica el nodo 1 en el host, para poder
+# mandarle una tarea directo (sin nginx) y saber cuál es el nodo de entrada.
+services:
+  nodo1:
+    ports:
+      - "127.0.0.1:${TP2_PUERTO_NODO1:-18081}:8080"

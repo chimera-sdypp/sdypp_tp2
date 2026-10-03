@@ -15,7 +15,6 @@
 name: tp2-hit3
 
 x-nodo: &nodo
-  build: ./servidor
   # En la VM, la imagen que publica el CI en GHCR (ver "Despliegue" en el README).
   image: ${TP2_IMAGEN:-cerberusdistribuido/tp2-servidor-hit3:dev}
   secrets:
@@ -43,6 +42,9 @@ x-entorno: &entorno
 services:
   nodo1:
     <<: *nodo
+    # Los 3 nodos usan la misma imagen: se construye una sola vez, acá. Con `build`
+    # en los 3, compose la construye 3 veces en paralelo y chocan al etiquetarla.
+    build: ./servidor
     environment:
       <<: *entorno
       TP2_NODO_ID: 1
