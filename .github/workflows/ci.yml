@@ -183,3 +183,92 @@ jobs:
           cat division.json
           grep -q '"codigo": 422' division.json
 
+  hit3-unitarios:
+    name: Hit 3 — tests unitarios y de API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hit3/servidor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+      - name: Compilar
+        run: python -m compileall -q app tests
+      - name: Tests (incluido Bully con una red en memoria)
+        run: python -m pytest -v
+      - name: Tests del servicio tarea
+        working-directory: hit3/tarea
+        run: python -m pytest -v
+
+  hit3-integracion:
+    name: Hit 3 — integración con Docker (cluster y caídas)
+    runs-on: ubuntu-latest
+    needs: hit3-unitarios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Instalar dependencias
+        run: pip install -r hit3/servidor/requirements-dev.txt
+      # Levanta los 3 nodos y nginx, mata al coordinador y a un ejecutor, y baja todo.
+      - name: Levantar y probar
+        run: PYTHON=python bash hit3/servidor/tests/integracion.sh
+
+  hit3-imagen:
+    name: Hit 3 — publicar la imagen de los nodos
+    runs-on: ubuntu-latest
+    needs: [gitleaks, hit3-integracion]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir y publicar en GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          imagen="ghcr.io/${GITHUB_REPOSITORY,,}-hit3"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            -t "$imagen:$GITHUB_SHA" -t "$imagen:latest" hit3/servidor
+          docker push "$imagen:$GITHUB_SHA"
+          docker push "$imagen:latest"
+          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en menos de un minuto."
+
+  hit3-desplegado:
+    name: Hit 3 — prueba contra lo desplegado
+    runs-on: ubuntu-latest
+    needs: hit3-imagen
+    env:
+      TP2_SERVIDOR: ${{ vars.TP2_HIT3_URL || 'http://18.231.127.74:8083' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mandar tareas al cluster público con el cliente
+        run: |
+          cliente() { python3 hit3/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
+          # La VM levanta la imagen nueva en hasta un minuto: se reintenta hasta 3 minutos.
+          for intento in $(seq 12); do
+            cliente suma '{"a": 3, "b": 4}' > suma.json && break
+            sleep 15
+          done
+          cat suma.json
+          grep -q '"resultado": 7' suma.json
+          grep -q '"nodo"' suma.json
+          cliente division '{"a": 1, "b": 0}' > division.json || true
+          cat division.json
+          grep -q '"codigo": 422' division.json
+      - name: Hay coordinador y los 3 nodos están vivos
+        run: |
+          for intento in $(seq 6); do  # round-robin: alguna vez contesta el coordinador
+            curl -s "$TP2_SERVIDOR/health" > health.json
+            python3 -c 'import json, sys; c = json.load(open("health.json"))["contenido"]["cluster"]; sys.exit(0 if c.get("rol") == "coordinador" and [n["estado"] for n in c["nodos"].values()] == ["vivo"] * 3 else 1)' && break
+            sleep 1
+          done
+          cat health.json
+          python3 -c 'import json; c = json.load(open("health.json"))["contenido"]["cluster"]; assert c["rol"] == "coordinador" and len(c["nodos"]) == 3, c'

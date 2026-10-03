@@ -333,6 +333,47 @@ sequenceDiagram
   (1 s), así que en ráfagas puede asignar con datos un poco viejos.
 - **La tarea del nodo de entrada que se cae se pierde** (ver arriba).
 
+## Despliegue
+
+En la misma VM de AWS EC2 que los Hits 1 y 2: **http://18.231.127.74:8083/health**. Como en los
+hits anteriores, la VM trae sola la imagen que publica el CI:
+
+```mermaid
+flowchart LR
+    G["GitHub Actions<br/>push a main"] -- "tests e integración en verde ⇒<br/>publica la imagen" --> R[(GHCR)]
+    subgraph VM[VM AWS EC2]
+        T["timer de systemd<br/>cada minuto"] -- "compose pull + up -d" --> X["nginx :8083"]
+        X --> N1[nodo 1] & N2[nodo 2] & N3[nodo 3]
+    end
+    T -- "¿hay imagen nueva?" --> R
+```
+
+- En cada push a `main`, después de gitleaks, los tests y la integración (que incluye matar al
+  coordinador y a un ejecutor), el CI publica la imagen de los nodos en GHCR
+  (`ghcr.io/svetovid-sdypp/sdypp_tp2-hit3`) con el `GITHUB_TOKEN` efímero del job.
+- En la VM, un timer de systemd hace `docker compose pull && up -d` cada minuto. Los 3 nodos usan
+  esa imagen y nginx, la oficial.
+- Después, el CI prueba lo desplegado: una suma (`200`, con el nodo que la ejecutó), una división
+  por cero (`422`) y que el coordinador vea a los 3 nodos vivos.
+- El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales. Lo cambia el
+  dueño del repositorio una sola vez, en *Package settings → Change visibility*.
+
+Para probar la caída en la VM: `docker compose -f /opt/sdypp-tp2-hit3/docker-compose.yml kill
+nodo3`. El nodo vuelve solo en el siguiente `up -d` del timer (en menos de un minuto) y recupera el
+puesto de coordinador.
+
+Instalarlo en una VM Ubuntu con Docker:
+
+```bash
+scp -i clave.pem hit3/despliegue/instalar_vm.sh hit3/docker-compose.yml hit3/nginx/nginx.conf ubuntu@<IP>:
+ssh -i clave.pem ubuntu@<IP>
+# en la VM: crear ~/.env como el .env.example, con TP2_PUERTO=8083 y
+#   TP2_IMAGEN=ghcr.io/svetovid-sdypp/sdypp_tp2-hit3:latest; después:
+sudo bash instalar_vm.sh && rm ~/.env
+```
+
+Antes de instalar, abrir el puerto 8083 en el *security group* de la VM.
+
 ## Configuración
 
 Variables de entorno de cada nodo, además de las del Hit 1 (ver [`.env.example`](.env.example)):
