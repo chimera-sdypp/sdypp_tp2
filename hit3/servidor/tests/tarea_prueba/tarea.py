@@ -1,7 +1,7 @@
 """Servicio tarea de PRUEBA para los tests de integración del servidor.
 
 No es el servicio tarea del Hit 1 (ese se publica en Docker Hub): es un doble
-que cumple el mismo contrato (hit1/contrato.md §5) y agrega cálculos para forzar
+que cumple el mismo contrato (hit3/contrato.md §5) y agrega cálculos para forzar
 cada caso de falla.
 """
 

@@ -1,7 +1,8 @@
-# Contrato — Hit 1 (servidor de tareas remotas)
+# Contrato — Hit 3 (cluster de tareas remotas)
 
-Define qué recibe y qué devuelve el servidor, y qué espera del servicio tarea. Se escribió antes
-del código.
+Es el contrato del Hit 1, visto desde el cliente a través de nginx, con lo que agrega el cluster:
+el nodo que ejecutó la tarea en la respuesta (§2), el estado del cluster en `/health`, los errores
+del cluster (§4) y los mensajes entre nodos (§6), que no se publican.
 
 ## 1. El sobre
 
@@ -9,7 +10,7 @@ del código.
 cualquier método:
 
 ```json
-{"codigo": 200, "contenido": {"calculo": "suma", "resultado": 7}}
+{"codigo": 200, "contenido": {"calculo": "suma", "resultado": 7, "nodo": 2}}
 {"codigo": 403, "contenido": {"error": {"tipo": "IMAGEN_NO_PERMITIDA", "mensaje": "…", "detalles": []}}}
 ```
 
@@ -25,10 +26,10 @@ error queda en el log del servidor.
 
 | Método y ruta | Qué hace |
 |---|---|
-| `POST /getRemoteTask` | `ejecutarTareaRemota()`: levanta el contenedor tarea, le pasa el trabajo y devuelve el resultado |
-| `GET /health` | Estado público `{servicio: estado}` |
+| `POST /getRemoteTask` | `ejecutarTareaRemota()` en el nodo que asigne el coordinador; devuelve el resultado |
+| `GET /health` | Estado del nodo que contesta y del cluster |
 
-Cualquier otra ruta → `404 RUTA_INEXISTENTE`. Un método que la ruta no soporta →
+Es lo único que publica nginx. Cualquier otra ruta (también `/cluster/*`) → `404 RUTA_INEXISTENTE`. Un método que la ruta no soporta →
 `405 METODO_NO_PERMITIDO` con la cabecera `Allow`. Siempre en el sobre.
 
 ### `POST /getRemoteTask`
@@ -67,15 +68,15 @@ Respuestas:
 
 | Código | Cuándo | `contenido` / `contenido.error.tipo` |
 |---|---|---|
-| `200` | La tarea terminó | `{calculo, resultado}` |
+| `200` | La tarea terminó | `{calculo, resultado, nodo}`: `nodo` es el ID del nodo que la ejecutó |
 | `400` | Cuerpo vacío, JSON mal formado, claves duplicadas, `NaN`, demasiado anidado | `CUERPO_VACIO`, `JSON_INVALIDO` |
 | `403` | La imagen no está en la lista blanca | `IMAGEN_NO_PERMITIDA` |
 | `413` | Cuerpo de más de 64 KiB | `CUERPO_DEMASIADO_GRANDE` |
 | `415` | `Content-Type` distinto de `application/json` | `TIPO_DE_CONTENIDO` |
 | `422` | Falla la validación; la imagen no existe; la tarea rechazó los parámetros | `PAYLOAD_INVALIDO`, `IMAGEN_INEXISTENTE`, `TAREA_RECHAZADA` |
 | `500` | Error inesperado del servidor | `ERROR_INTERNO` |
-| `502` | La tarea falló o contestó algo inválido; el registry no respondió | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE` |
-| `503` | Docker no responde | `SERVICIO_NO_DISPONIBLE` |
+| `502` | La tarea falló o contestó algo inválido; el registry no respondió; se cayó el nodo que atendía el pedido (lo contesta nginx) | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE`, `NODO_NO_DISPONIBLE` |
+| `503` | Docker no responde; no hay coordinador ni nodos vivos a tiempo (`TP2_TIMEOUT_ASIGNACION`) | `SERVICIO_NO_DISPONIBLE`, `CLUSTER_NO_DISPONIBLE` |
 | `504` | El contenedor no quedó listo o no contestó a tiempo | `TAREA_SIN_RESPUESTA` |
 
 Por qué esos códigos:
@@ -89,11 +90,17 @@ Por qué esos códigos:
 ### `GET /health`
 
 ```json
-{"codigo": 200, "contenido": {"servidor": "ok", "docker": "ok"}}
+{"codigo": 200, "contenido": {"servidor": "ok", "docker": "ok",
+  "cluster": {"nodo": 3, "coordinador": 3, "rol": "coordinador", "tareas_en_curso": 0,
+              "nodos": {"1": {"estado": "vivo", "tareas_en_curso": 0, "ultimo_heartbeat_hace": 0.4},
+                        "2": {"estado": "vivo", "tareas_en_curso": 1, "ultimo_heartbeat_hace": 0.9},
+                        "3": {"estado": "vivo", "tareas_en_curso": 0, "ultimo_heartbeat_hace": 0.1}}}}}
 ```
 
 `200` si puede atender. `503` si Docker no responde, con `"docker": "caido"`: el proceso vive, pero
-no puede ejecutar tareas.
+no puede ejecutar tareas. `cluster` es la vista del nodo que contestó (nginx elige cuál):
+`coordinador` es `null` durante una elección, y `nodos` (el registro) sólo aparece si contestó el
+coordinador.
 
 ## 3. Lista blanca de imágenes
 
@@ -107,14 +114,16 @@ se permite **ninguna** imagen.
 `CUERPO_VACIO` · `JSON_INVALIDO` · `TIPO_DE_CONTENIDO` · `CUERPO_DEMASIADO_GRANDE` ·
 `PAYLOAD_INVALIDO` · `IMAGEN_NO_PERMITIDA` · `IMAGEN_INEXISTENTE` · `TAREA_RECHAZADA` ·
 `TAREA_FALLIDA` · `TAREA_SIN_RESPUESTA` · `REGISTRY_NO_DISPONIBLE` · `SERVICIO_NO_DISPONIBLE` ·
-`RUTA_INEXISTENTE` · `METODO_NO_PERMITIDO` · `ERROR_INTERNO`
+`RUTA_INEXISTENTE` · `METODO_NO_PERMITIDO` · `ERROR_INTERNO` · `CLUSTER_NO_DISPONIBLE` ·
+`NODO_NO_DISPONIBLE` (sólo de nginx) · `NO_ES_COORDINADOR` y `COORDINADOR_RECHAZADO` (sólo entre
+nodos, §6)
 
 En `PAYLOAD_INVALIDO`, `contenido.error.detalles` lista cada problema:
 `[{"campo": "parametros", "problema": "no puede ser null"}]`.
 
 ## 5. Lo que el servidor espera del servicio tarea
 
-Lo implementa [`tarea/tarea.py`](tarea/tarea.py). Usa **el mismo sobre** que el servidor (§1):
+Lo implementa [`tarea/tarea.py`](tarea/tarea.py), igual que en el Hit 1. Usa **el mismo sobre** que el servidor (§1):
 `{"codigo", "contenido"}`, salga bien o mal.
 
 - Escucha HTTP en el puerto `8080` del contenedor.
@@ -130,3 +139,17 @@ Lo implementa [`tarea/tarea.py`](tarea/tarea.py). Usa **el mismo sobre** que el 
 Cálculos de `tarea/tarea.py`: `suma`, `resta`, `multiplicacion` y `division`, sobre
 `parametros = {"a": <número>, "b": <número>}`. Un cálculo desconocido, parámetros que no son números,
 la división por cero o un resultado fuera de rango son un `422`.
+
+## 6. Mensajes entre nodos (`/cluster/*`)
+
+Sólo por la red interna `cluster`: nginx no los publica. Todos son `POST` con JSON y contestan con
+el sobre de §1. Un mensaje mal formado (tipos, campos de más) → `422 PAYLOAD_INVALIDO`.
+
+| Ruta | Cuerpo | Respuesta |
+|---|---|---|
+| `/cluster/eleccion` | `{"de": 1}` | `200 {"ok": <mi id>}`: es el `OK` de Bully; el receptor arranca su propia elección |
+| `/cluster/coordinador` | `{"de": 3}` | `200 {"coordinador": 3}` si lo acepta. `409 COORDINADOR_RECHAZADO` si `de` es menor que el receptor, que convoca una elección |
+| `/cluster/heartbeat` | `{"de": 1, "tareas_en_curso": 0}` | `200 {"coordinador": <mi id>}`. `409 NO_ES_COORDINADOR` si el receptor no es el coordinador: el emisor convoca una elección |
+| `/cluster/asignar` | `{"de": 1, "excluir": [3]}` | `200 {"nodo": 2}`: el nodo vivo con menos tareas, fuera de `excluir`. `409 NO_ES_COORDINADOR`; `503 CLUSTER_NO_DISPONIBLE` si no queda ninguno |
+| `/cluster/ejecutar` | El de `POST /getRemoteTask` | Lo ejecuta en este nodo: `200 {"resultado", "nodo"}` o el error de la tarea, que el nodo de entrada le devuelve tal cual al cliente. Valida y mira la lista blanca otra vez |
+

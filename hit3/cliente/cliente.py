@@ -1,4 +1,4 @@
-"""Cliente del Hit 1: manda una tarea al servidor por POST JSON y muestra la respuesta.
+"""Cliente del Hit 3: manda una tarea al cluster (por nginx) por POST JSON y muestra la respuesta.
 
     python cliente.py suma '{"a": 3, "b": 4}' --imagen usuario/tarea:1.0.0
     python cliente.py division '{"a": 1, "b": 0}' --imagen usuario/tarea:1.0.0 --servidor http://host:8080
@@ -31,7 +31,7 @@ def enviar_tarea(servidor, calculo, parametros, datos, imagen, timeout=120.0):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Cliente del Hit 1")
+    parser = argparse.ArgumentParser(description="Cliente del Hit 3")
     parser.add_argument("calculo", help="suma, resta, multiplicacion o division")
     parser.add_argument("parametros", type=json.loads, help="objeto JSON, p. ej. '{\"a\": 3, \"b\": 4}'")
     parser.add_argument("--datos", type=json.loads, default={}, help="objeto JSON con datos adicionales")
