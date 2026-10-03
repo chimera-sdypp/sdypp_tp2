@@ -202,6 +202,13 @@ def test_al_asumir_el_registro_arranca_de_cero():
     assert set(nodo.registro.estado()) == {"1"}
 
 
+def test_al_asumir_anota_a_los_que_aceptaron_el_anuncio():
+    # El 2 acepta el COORDINADOR; el 3 está caído. El 2 entra al registro sin esperar heartbeat.
+    nodo, _ = _nodo(Http({"http://nodo2/cluster/coordinador": sobre(200, {"coordinador": 1})}))
+    nodo.bully._proclamarse()
+    assert set(nodo.registro.estado()) == {"1", "2"}
+
+
 def test_iniciar_limpia_huerfanos_y_convoca_eleccion():
     nodo, lanzador = _nodo(intervalo_heartbeat=0.01)
     nodo.iniciar()

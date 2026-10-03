@@ -27,7 +27,8 @@ def _en_un_hilo(funcion):
 
 
 class Bully:
-    def __init__(self, config, logger, http=http_json, en_segundo_plano=_en_un_hilo, al_asumir=None):
+    def __init__(self, config, logger, http=http_json, en_segundo_plano=_en_un_hilo, al_asumir=None,
+                 al_anunciarse=None):
         self.mi_id = config.nodo_id
         self._pares = dict(config.pares)
         self._config = config
@@ -35,6 +36,8 @@ class Bully:
         self._http = http
         self._en_segundo_plano = en_segundo_plano
         self._al_asumir = al_asumir or (lambda: None)
+        # Recibe los nodos que aceptaron el COORDINADOR: se sabe que están vivos.
+        self._al_anunciarse = al_anunciarse or (lambda aceptaron: None)
         self._cond = threading.Condition()
         self._coordinador = None
         self._en_eleccion = False
@@ -59,9 +62,14 @@ class Bully:
             return self._coordinador
 
     # ------------------------------------------------------------- la elección
-    def iniciar_eleccion(self, motivo):
+    def iniciar_eleccion(self, motivo, si_sigue=None):
+        """`si_sigue`: sólo si el coordinador todavía es ese nodo. Es para las sospechas
+        (un heartbeat o una asignación que falló): mientras el mensaje iba y volvía pudo
+        haber llegado un COORDINADOR nuevo, y entonces la sospecha ya no corre."""
         with self._cond:
             if self._en_eleccion:
+                return
+            if si_sigue is not None and self._coordinador != si_sigue:
                 return
             self._en_eleccion = True
             self._coordinador = None
@@ -98,7 +106,7 @@ class Bully:
         self._log.info("bully | nodo %d es el nuevo COORDINADOR | COORDINADOR → %s", self.mi_id,
                        sorted(self._pares) or "nadie")
         self._al_asumir()
-        self._mandar_a_todos(self._pares, "/cluster/coordinador")
+        self._al_anunciarse(self._mandar_a_todos(self._pares, "/cluster/coordinador"))
 
     def _mandar_a_todos(self, nodos, ruta):
         """Manda el mensaje a todos a la vez; devuelve los IDs que contestaron 200.
@@ -156,7 +164,7 @@ class Bully:
         except (SinConexion, Vencido) as error:
             self._log.warning("bully | nodo %d: el coordinador %d no responde (%s)", self.mi_id,
                               coordinador, error)
-            self.iniciar_eleccion(f"el coordinador {coordinador} no responde")
+            self.iniciar_eleccion(f"el coordinador {coordinador} no responde", si_sigue=coordinador)
             return
         if estado != 200:
-            self.iniciar_eleccion(f"el nodo {coordinador} dice que no es coordinador")
+            self.iniciar_eleccion(f"el nodo {coordinador} dice que no es coordinador", si_sigue=coordinador)

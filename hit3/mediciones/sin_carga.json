@@ -1,0 +1,142 @@
+{
+  "repeticiones": 5,
+  "clientes": 0,
+  "imagen": "cerberusdistribuido/tarea:test",
+  "intervalo_heartbeat_s": 1.0,
+  "resumen": {
+    "deteccion_ms": {
+      "media": 599,
+      "min": 156,
+      "max": 851,
+      "desvio": 297
+    },
+    "eleccion_ms": {
+      "media": 28,
+      "min": 23,
+      "max": 34,
+      "desvio": 5
+    },
+    "lider_nuevo_ms": {
+      "media": 627,
+      "min": 185,
+      "max": 885,
+      "desvio": 296
+    },
+    "todos_aceptan_ms": {
+      "media": 629,
+      "min": 187,
+      "max": 886,
+      "desvio": 296
+    },
+    "visto_por_nginx_ms": {
+      "media": 635,
+      "min": 195,
+      "max": 889,
+      "desvio": 294
+    },
+    "vuelta_arranque_ms": {
+      "media": 1016,
+      "min": 1005,
+      "max": 1035,
+      "desvio": 12
+    },
+    "vuelta_lider_ms": {
+      "media": 1024,
+      "min": 1013,
+      "max": 1043,
+      "desvio": 12
+    }
+  },
+  "resultados": [
+    {
+      "coordinador_caido": 3,
+      "coordinador_nuevo": 2,
+      "deteccion_ms": 429,
+      "eleccion_ms": 32,
+      "lider_nuevo_ms": 462,
+      "todos_aceptan_ms": 463,
+      "visto_por_nginx_ms": 472,
+      "vuelta_arranque_ms": 1012,
+      "vuelta_lider_ms": 1020,
+      "tareas_total": 0,
+      "tareas_afectadas": 0,
+      "afectadas_ok": 0,
+      "afectadas_fallidas": [],
+      "reasignadas": 0,
+      "latencia_normal_ms": null,
+      "latencia_max_afectadas_ms": null
+    },
+    {
+      "coordinador_caido": 3,
+      "coordinador_nuevo": 2,
+      "deteccion_ms": 156,
+      "eleccion_ms": 29,
+      "lider_nuevo_ms": 185,
+      "todos_aceptan_ms": 187,
+      "visto_por_nginx_ms": 195,
+      "vuelta_arranque_ms": 1005,
+      "vuelta_lider_ms": 1013,
+      "tareas_total": 0,
+      "tareas_afectadas": 0,
+      "afectadas_ok": 0,
+      "afectadas_fallidas": [],
+      "reasignadas": 0,
+      "latencia_normal_ms": null,
+      "latencia_max_afectadas_ms": null
+    },
+    {
+      "coordinador_caido": 3,
+      "coordinador_nuevo": 2,
+      "deteccion_ms": 778,
+      "eleccion_ms": 24,
+      "lider_nuevo_ms": 802,
+      "todos_aceptan_ms": 804,
+      "visto_por_nginx_ms": 806,
+      "vuelta_arranque_ms": 1018,
+      "vuelta_lider_ms": 1026,
+      "tareas_total": 0,
+      "tareas_afectadas": 0,
+      "afectadas_ok": 0,
+      "afectadas_fallidas": [],
+      "reasignadas": 0,
+      "latencia_normal_ms": null,
+      "latencia_max_afectadas_ms": null
+    },
+    {
+      "coordinador_caido": 3,
+      "coordinador_nuevo": 2,
+      "deteccion_ms": 780,
+      "eleccion_ms": 23,
+      "lider_nuevo_ms": 803,
+      "todos_aceptan_ms": 804,
+      "visto_por_nginx_ms": 813,
+      "vuelta_arranque_ms": 1010,
+      "vuelta_lider_ms": 1018,
+      "tareas_total": 0,
+      "tareas_afectadas": 0,
+      "afectadas_ok": 0,
+      "afectadas_fallidas": [],
+      "reasignadas": 0,
+      "latencia_normal_ms": null,
+      "latencia_max_afectadas_ms": null
+    },
+    {
+      "coordinador_caido": 3,
+      "coordinador_nuevo": 2,
+      "deteccion_ms": 851,
+      "eleccion_ms": 34,
+      "lider_nuevo_ms": 885,
+      "todos_aceptan_ms": 886,
+      "visto_por_nginx_ms": 889,
+      "vuelta_arranque_ms": 1035,
+      "vuelta_lider_ms": 1043,
+      "tareas_total": 0,
+      "tareas_afectadas": 0,
+      "afectadas_ok": 0,
+      "afectadas_fallidas": [],
+      "reasignadas": 0,
+      "latencia_normal_ms": null,
+      "latencia_max_afectadas_ms": null
+    }
+  ]
+}

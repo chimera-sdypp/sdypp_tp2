@@ -128,6 +128,25 @@ def test_heartbeat_a_un_nodo_que_no_es_coordinador_dispara_eleccion(red):
     assert red.coordinadores() == {1: 3, 2: 3, 3: 3}
 
 
+def test_si_mientras_late_llega_otro_coordinador_no_hay_segunda_eleccion():
+    # El heartbeat sale hacia el 3 (que murió) y, antes de que falle, el 2 se anuncia.
+    red = Red([1, 2, 3])
+    red.nodos[3].iniciar_eleccion("arranque")
+    red.caer(3)
+    original = red._http
+
+    def anuncio_en_vuelo(metodo, url, cuerpo=None, timeout=5.0):
+        if url == "http://nodo3/cluster/heartbeat":
+            red.nodos[1].recibir_coordinador(2)
+        return original(metodo, url, cuerpo, timeout)
+
+    red.nodos[1]._http = anuncio_en_vuelo
+    red.mensajes.clear()
+    red.nodos[1].latir(tareas_en_curso=0)
+    assert red.nodos[1].coordinador == 2
+    assert [m for m in red.mensajes if m[2] == "cluster/eleccion"] == []
+
+
 def test_un_timeout_tambien_cuenta_como_caida():
     red = Red([1, 2])
     red.nodos[2].iniciar_eleccion("arranque")

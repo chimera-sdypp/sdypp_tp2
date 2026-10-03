@@ -62,3 +62,11 @@ def test_reiniciar_lo_vacia():
     registro.actualizar(1, 0)
     registro.reiniciar()
     assert registro.estado() == {}
+
+
+def test_conocer_no_pisa_lo_que_trajo_un_heartbeat():
+    registro, _ = _registro()
+    registro.actualizar(2, 5)
+    registro.conocer(2)
+    registro.conocer(3)
+    assert {n: e["tareas_en_curso"] for n, e in registro.estado().items()} == {"2": 5, "3": 0}

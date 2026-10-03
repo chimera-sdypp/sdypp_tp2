@@ -33,7 +33,8 @@ class Nodo:
         self._reloj = reloj
         self._dormir = dormir
         self.registro = registro or RegistroNodos(config.vencimiento_nodo)
-        self.bully = bully or Bully(config, logger, http=http, al_asumir=self._al_asumir)
+        self.bully = bully or Bully(config, logger, http=http, al_asumir=self._al_asumir,
+                                    al_anunciarse=self._al_anunciarse)
         self._lock = threading.Lock()
         self._en_curso = 0
         self._detener = threading.Event()
@@ -70,6 +71,13 @@ class Nodo:
     def _al_asumir(self):
         self.registro.reiniciar()
         self.registro.actualizar(self.mi_id, self.tareas_en_curso)
+
+    def _al_anunciarse(self, aceptaron):
+        """Los que aceptaron el COORDINADOR están vivos: entran al registro ya, sin esperar
+        su primer heartbeat. Si no, durante ~1 s el coordinador nuevo sólo se conoce a sí
+        mismo y se asigna todas las tareas."""
+        for nodo in aceptaron:
+            self.registro.conocer(nodo)
 
     # ---------------------------------------------------------------- coordinador
     def recibir_heartbeat(self, de, tareas_en_curso):
@@ -134,7 +142,7 @@ class Nodo:
             except (SinConexion, Vencido) as error:
                 self._log.warning("cluster | el coordinador %d no responde al pedir asignación (%s)",
                                   coordinador, error)
-                self.bully.iniciar_eleccion(f"el coordinador {coordinador} no asigna")
+                self.bully.iniciar_eleccion(f"el coordinador {coordinador} no asigna", si_sigue=coordinador)
                 continue
             contenido = respuesta.get("contenido") if isinstance(respuesta, dict) else None
             if estado == 200 and isinstance(contenido, dict) and isinstance(contenido.get("nodo"), int):

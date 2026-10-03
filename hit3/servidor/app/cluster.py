@@ -35,6 +35,11 @@ class RegistroNodos:
         with self._lock:
             self._nodos[nodo] = EstadoNodo(tareas_en_curso, self._reloj())
 
+    def conocer(self, nodo):
+        """Lo anota como vivo y sin tareas, si todavía no mandó heartbeat."""
+        with self._lock:
+            self._nodos.setdefault(nodo, EstadoNodo(0, self._reloj()))
+
     def _vivo(self, estado, ahora):
         return ahora - estado.ultimo_heartbeat <= self._vencimiento
 
