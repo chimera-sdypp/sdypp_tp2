@@ -1,0 +1,39 @@
+{
+  "tareas_por_medicion": 32,
+  "repeticiones": 3,
+  "fraccion_paralela_amdahl": 0.937,
+  "resultados": [
+    {
+      "workers": 1,
+      "segundos": 26.67,
+      "desvio_segundos": 2.66,
+      "throughput_tpm": 72.0,
+      "latencia_media_s": 14.4,
+      "speedup": 1.0
+    },
+    {
+      "workers": 2,
+      "segundos": 15.02,
+      "desvio_segundos": 2.81,
+      "throughput_tpm": 127.9,
+      "latencia_media_s": 7.71,
+      "speedup": 1.78
+    },
+    {
+      "workers": 4,
+      "segundos": 7.32,
+      "desvio_segundos": 0.25,
+      "throughput_tpm": 262.2,
+      "latencia_media_s": 4.14,
+      "speedup": 3.64
+    },
+    {
+      "workers": 8,
+      "segundos": 4.88,
+      "desvio_segundos": 0.12,
+      "throughput_tpm": 393.3,
+      "latencia_media_s": 2.99,
+      "speedup": 5.46
+    }
+  ]
+}
