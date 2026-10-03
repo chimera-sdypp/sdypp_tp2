@@ -350,7 +350,7 @@ flowchart LR
 
 - En cada push a `main`, después de gitleaks, los tests y la integración (que incluye matar al
   coordinador y a un ejecutor), el CI publica la imagen de los nodos en GHCR
-  (`ghcr.io/svetovid-sdypp/sdypp_tp2-hit3`) con el `GITHUB_TOKEN` efímero del job.
+  (`ghcr.io/chimera-sdypp/sdypp_tp2-hit3`) con el `GITHUB_TOKEN` efímero del job.
 - En la VM, un timer de systemd hace `docker compose pull && up -d` cada minuto. Los 3 nodos usan
   esa imagen y nginx, la oficial.
 - Después, el CI prueba lo desplegado: una suma (`200`, con el nodo que la ejecutó), una división
@@ -368,7 +368,7 @@ Instalarlo en una VM Ubuntu con Docker:
 scp -i clave.pem hit3/despliegue/instalar_vm.sh hit3/docker-compose.yml hit3/nginx/nginx.conf ubuntu@<IP>:
 ssh -i clave.pem ubuntu@<IP>
 # en la VM: crear ~/.env como el .env.example, con TP2_PUERTO=8083 y
-#   TP2_IMAGEN=ghcr.io/svetovid-sdypp/sdypp_tp2-hit3:latest; después:
+#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit3:latest; después:
 sudo bash instalar_vm.sh && rm ~/.env
 ```
 
