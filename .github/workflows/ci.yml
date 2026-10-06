@@ -80,7 +80,7 @@ jobs:
             -t "$imagen:$GITHUB_SHA" -t "$imagen:latest" hit1/servidor
           docker push "$imagen:$GITHUB_SHA"
           docker push "$imagen:latest"
-          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en menos de un minuto."
+          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en hasta 5 minutos."
 
   hit1-desplegado:
     name: Hit 1 — prueba contra lo desplegado
@@ -93,7 +93,8 @@ jobs:
       - name: Mandar tareas al servidor público con el cliente
         run: |
           cliente() { python3 hit1/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
-          # La VM levanta la imagen nueva en hasta un minuto: se reintenta hasta 3 minutos.
+          # Si el servidor no contesta (p. ej. mientras la VM recrea el contenedor), se
+          # reintenta hasta 3 minutos. No comprueba qué versión contesta.
           for intento in $(seq 12); do
             cliente suma '{"a": 3, "b": 4}' > suma.json && break
             sleep 15
@@ -159,7 +160,7 @@ jobs:
             -t "$imagen:$GITHUB_SHA" -t "$imagen:latest" hit2/servidor
           docker push "$imagen:$GITHUB_SHA"
           docker push "$imagen:latest"
-          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en menos de un minuto."
+          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en hasta 5 minutos."
 
   hit2-desplegado:
     name: Hit 2 — prueba contra lo desplegado
@@ -239,7 +240,7 @@ jobs:
             -t "$imagen:$GITHUB_SHA" -t "$imagen:latest" hit3/servidor
           docker push "$imagen:$GITHUB_SHA"
           docker push "$imagen:latest"
-          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en menos de un minuto."
+          echo "Publicada $imagen:$GITHUB_SHA (y :latest). La VM la levanta en hasta 5 minutos."
 
   hit3-desplegado:
     name: Hit 3 — prueba contra lo desplegado
@@ -252,7 +253,8 @@ jobs:
       - name: Mandar tareas al cluster público con el cliente
         run: |
           cliente() { python3 hit3/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
-          # La VM levanta la imagen nueva en hasta un minuto: se reintenta hasta 3 minutos.
+          # Si el servidor no contesta (p. ej. mientras la VM recrea el contenedor), se
+          # reintenta hasta 3 minutos. No comprueba qué versión contesta.
           for intento in $(seq 12); do
             cliente suma '{"a": 3, "b": 4}' > suma.json && break
             sleep 15

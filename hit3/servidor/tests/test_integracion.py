@@ -141,6 +141,15 @@ def test_imagen_fuera_de_la_lista():
     assert cuerpo["contenido"]["error"]["tipo"] == "IMAGEN_NO_PERMITIDA"
 
 
+@pytest.mark.parametrize("tamanio", [70 * 1024, 2 * 1024 * 1024])
+def test_cuerpo_demasiado_grande_es_413_en_el_sobre(tamanio):
+    # 2 MiB supera el límite por defecto de nginx (1 MiB): sin el error_page propio, sale en HTML.
+    codigo, cuerpo = pedir("POST", "/getRemoteTask", {"calculo": "suma", "parametros": {"a": 1, "b": 1},
+                                                      "datos": {"x": "a" * tamanio}, "imagen": IMAGEN})
+    assert codigo == 413
+    assert cuerpo["contenido"]["error"]["tipo"] == "CUERPO_DEMASIADO_GRANDE"
+
+
 @pytest.mark.parametrize("ruta", ["/cluster/coordinador", "/cluster/eleccion", "/cluster/ejecutar"])
 def test_las_rutas_del_cluster_no_se_publican(ruta):
     codigo, cuerpo = pedir("POST", ruta, {"de": 99})
