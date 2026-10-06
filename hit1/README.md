@@ -180,15 +180,16 @@ el 8080).
 flowchart LR
     G["GitHub Actions<br/>push a main"] -- "tests en verde ⇒<br/>publica la imagen" --> R[(GHCR)]
     subgraph VM[VM AWS EC2]
-        T["timer de systemd<br/>cada minuto"] -- "compose pull + up -d" --> S[Servidor :8081]
+        T["timer de systemd<br/>cada 5 minutos"] -- "compose pull + up -d" --> S[Servidor :8081]
     end
     T -- "¿hay imagen nueva?" --> R
 ```
 
 - En cada push a `main`, después de gitleaks y los tests, el CI publica la imagen del servidor en
   GHCR (`ghcr.io/chimera-sdypp/sdypp_tp2-hit1`) con el `GITHUB_TOKEN` efímero del job.
-- En la VM, un timer de systemd hace `docker compose pull && up -d` cada minuto: la VM trae sola
-  la imagen nueva. GitHub no tiene ninguna credencial de la VM y el SSH no queda abierto a Internet.
+- En la VM, un timer de systemd hace `docker compose pull && up -d` cada 5 minutos: la VM trae sola
+  la imagen nueva. Los timers de los tres hits comparten un candado (`flock`): si el `image prune`
+  de uno corre mientras otro baja una imagen, Docker pierde la descarga. GitHub no tiene ninguna credencial de la VM y el SSH no queda abierto a Internet.
 - Después, el CI prueba lo desplegado: manda con el cliente una suma (`200`) y una división por
   cero (`422`) a la URL pública, lo que incluye el pull de la imagen privada de la tarea.
 - El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales. Lo cambia el
