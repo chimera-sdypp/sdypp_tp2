@@ -20,8 +20,6 @@ info:
     **Sin autenticación ni CORS**, HTTP sin TLS. "Try it out" no anda desde el navegador: usar el
     `curl` que muestra Swagger. No son públicos los mensajes entre nodos del Hit 3 (`/cluster/*`)
     ni el servicio tarea.
-
-    **Limitación:** en el Hit 3, un cuerpo de más de 1 MiB lo corta nginx con un `413` en HTML.
 servers:
   - url: http://18.231.127.74:8081
     description: Hit 1

@@ -97,7 +97,6 @@ si se cae el coordinador, se elige otro en menos de un segundo.
   cayó el que atendía tu pedido: reintentá) y `503 CLUSTER_NO_DISPONIBLE` (no hay coordinador ni
   nodos vivos).
 - Los mensajes entre nodos (`/cluster/*`) no se publican: desde afuera dan `404`.
-- Un cuerpo de más de 1 MiB lo corta nginx con un `413` en HTML, fuera del sobre.
 
 ```bash
 curl -s http://18.231.127.74:8083/health
