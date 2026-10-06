@@ -1,0 +1,234 @@
+openapi: 3.1.0
+info:
+  title: TP2 · Servidor de tareas remotas (Hits 1, 2 y 3)
+  version: 1.0.0
+  description: |
+    Contrato público de los tres servidores. Los tres exponen las mismas dos rutas; se elige el
+    hit en **Servers**.
+
+    | Hit | Qué agrega |
+    |---|---|
+    | 1 | Ejecuta cada tarea en un contenedor Docker efímero |
+    | 2 | Pool de 4 workers y relojes de Lamport: cabecera `X-Lamport-Clock` (entra y sale en toda respuesta) y `lamport_ts`/`pool` en el cuerpo |
+    | 3 | 3 nodos detrás de nginx con coordinador elegido por Bully: `nodo` en la respuesta, `cluster` en `/health` |
+
+    **Sobre:** toda respuesta es `{"codigo", "contenido"}`; en un error, `contenido` es sólo
+    `{"error": {"tipo", "mensaje", "detalles"}}`. Los clientes deciden por `tipo`; `mensaje` es
+    para personas y puede cambiar. Otra ruta → `404 RUTA_INEXISTENTE`; otro método →
+    `405 METODO_NO_PERMITIDO` con `Allow`.
+
+    **Sin autenticación ni CORS**, HTTP sin TLS. "Try it out" no anda desde el navegador: usar el
+    `curl` que muestra Swagger. No son públicos los mensajes entre nodos del Hit 3 (`/cluster/*`)
+    ni el servicio tarea.
+servers:
+  - url: http://18.231.127.74:8081
+    description: Hit 1
+  - url: http://18.231.127.74:8082
+    description: Hit 2
+  - url: http://18.231.127.74:8083
+    description: Hit 3 (nginx)
+security: []  # sin autenticación
+paths:
+  /getRemoteTask:
+    post:
+      operationId: getRemoteTask
+      summary: Ejecutar una tarea en un contenedor efímero
+      description: |
+        El servidor baja la imagen (con su propio token: el cliente nunca manda credenciales),
+        levanta el contenedor, le pasa el trabajo, devuelve el resultado y borra el contenedor.
+        La validación rechaza, nunca corrige: tipos estrictos, sin campos de más, sin claves
+        duplicadas ni `NaN`, hasta 32 niveles de anidamiento y 64 KiB. La tarea tiene 30 s para
+        arrancar y 60 s para contestar.
+      parameters:
+        - $ref: '#/components/parameters/XLamportClock'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SolicitudTarea'
+            example:
+              calculo: suma
+              parametros: {a: 3, b: 4}
+              imagen: cerberusdistribuido/tarea:1.0.0
+      responses:
+        '200':
+          description: La tarea terminó.
+          headers:
+            X-Lamport-Clock:
+              $ref: '#/components/headers/XLamportClock'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespuestaTarea'
+              examples:
+                hit1: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7}}}
+                hit2: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7, lamport_ts: 12820}}}
+                hit3: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7, nodo: 3}}}
+        '400': {$ref: '#/components/responses/Error', description: 'Cuerpo vacío o JSON inválido: `CUERPO_VACIO`, `JSON_INVALIDO`.'}
+        '403': {$ref: '#/components/responses/Error', description: 'La imagen no está en la lista blanca: `IMAGEN_NO_PERMITIDA`.'}
+        '413': {$ref: '#/components/responses/Error', description: 'Más de 64 KiB: `CUERPO_DEMASIADO_GRANDE`.'}
+        '415': {$ref: '#/components/responses/Error', description: '`Content-Type` distinto de `application/json`: `TIPO_DE_CONTENIDO`.'}
+        '422':
+          $ref: '#/components/responses/Error'
+          description: |
+            `PAYLOAD_INVALIDO` (con un elemento en `detalles` por problema), `IMAGEN_INEXISTENTE`,
+            o `TAREA_RECHAZADA` (la tarea rechazó los parámetros; el motivo va en `mensaje`).
+        '500': {$ref: '#/components/responses/Error', description: 'Error inesperado: `ERROR_INTERNO`.'}
+        '502':
+          $ref: '#/components/responses/Error'
+          description: |
+            `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE`, o en el Hit 3 `NODO_NO_DISPONIBLE` (lo genera
+            nginx: no respondió ningún nodo o se cayó el que atendía). Reintentar es seguro: las
+            tareas no tienen efectos secundarios.
+        '503': {$ref: '#/components/responses/Error', description: 'Docker no responde (`SERVICIO_NO_DISPONIBLE`) o, en el Hit 3, no hay coordinador ni nodos vivos (`CLUSTER_NO_DISPONIBLE`).'}
+        '504': {$ref: '#/components/responses/Error', description: 'La tarea no arrancó o no contestó a tiempo: `TAREA_SIN_RESPUESTA`.'}
+  /health:
+    get:
+      operationId: health
+      summary: Estado del servidor ({servicio, estado})
+      description: '`200` si puede ejecutar tareas; `503` si Docker no responde. En el Hit 3 contesta el nodo que elige nginx.'
+      parameters:
+        - $ref: '#/components/parameters/XLamportClock'
+      responses:
+        '200':
+          description: Puede atender.
+          headers:
+            X-Lamport-Clock:
+              $ref: '#/components/headers/XLamportClock'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              examples:
+                hit1: {value: {codigo: 200, contenido: {servidor: ok, docker: ok}}}
+                hit2: {value: {codigo: 200, contenido: {servidor: ok, docker: ok, pool: {workers_activos: 0, workers_max: 4, tareas_encoladas: 0}, lamport_ts: 12824}}}
+                hit3: {value: {codigo: 200, contenido: {servidor: ok, docker: ok, cluster: {nodo: 1, coordinador: 3, rol: worker, tareas_en_curso: 0}}}}
+        '503':
+          description: 'Docker no responde (`"docker": "caido"`).'
+          headers:
+            X-Lamport-Clock:
+              $ref: '#/components/headers/XLamportClock'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  parameters:
+    XLamportClock:
+      name: X-Lamport-Clock
+      in: header
+      description: Sólo Hit 2. Reloj de Lamport del cliente; ordena la cola. Si falta o no es un entero, vale 0.
+      schema: {type: integer, minimum: 0}
+  headers:
+    XLamportClock:
+      description: Sólo Hit 2, en toda respuesta. Reloj de Lamport del servidor al contestar.
+      schema: {type: integer, minimum: 1}
+  responses:
+    Error:
+      description: Error, en el sobre.
+      headers:
+        X-Lamport-Clock:
+          $ref: '#/components/headers/XLamportClock'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {codigo: 422, contenido: {error: {tipo: TAREA_RECHAZADA, mensaje: división por cero, detalles: []}}}
+  schemas:
+    SolicitudTarea:
+      type: object
+      additionalProperties: false
+      required: [calculo, parametros, imagen]
+      properties:
+        calculo:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          maxLength: 64
+          description: Con la imagen publicada, `suma`, `resta`, `multiplicacion` o `division`.
+        parametros:
+          type: object
+          description: 'Los interpreta la tarea. La imagen publicada espera `{"a": <número>, "b": <número>}`.'
+        datos:
+          type: object
+          default: {}
+        imagen:
+          type: string
+          maxLength: 255
+          description: Con versión fija (tag distinto de `latest`, o digest) y en la lista blanca (en el despliegue, `cerberusdistribuido/tarea`).
+    RespuestaTarea:
+      type: object
+      required: [codigo, contenido]
+      properties:
+        codigo: {type: integer, const: 200}
+        contenido:
+          type: object
+          required: [calculo, resultado]
+          properties:
+            calculo: {type: string}
+            resultado: {description: Lo que devolvió la tarea; cualquier valor JSON.}
+            lamport_ts: {type: integer, description: Sólo Hit 2. Igual a la cabecera `X-Lamport-Clock`.}
+            nodo: {type: integer, description: Sólo Hit 3. ID del nodo que ejecutó la tarea.}
+    Health:
+      type: object
+      required: [codigo, contenido]
+      properties:
+        codigo: {type: integer, enum: [200, 503]}
+        contenido:
+          type: object
+          required: [servidor, docker]
+          properties:
+            servidor: {type: string, const: ok}
+            docker: {type: string, enum: [ok, caido]}
+            pool:
+              description: Sólo Hit 2.
+              type: object
+              properties:
+                workers_activos: {type: integer}
+                workers_max: {type: integer}
+                tareas_encoladas: {type: integer}
+            lamport_ts: {type: integer, description: Sólo Hit 2.}
+            cluster:
+              description: Sólo Hit 3. La vista del nodo que contestó; `nodos` sólo si contestó el coordinador.
+              type: object
+              properties:
+                nodo: {type: integer}
+                coordinador: {type: [integer, 'null'], description: '`null` durante una elección.'}
+                rol: {type: string, enum: [coordinador, worker]}
+                tareas_en_curso: {type: integer}
+                nodos:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      estado: {type: string, enum: [vivo, caido]}
+                      tareas_en_curso: {type: integer}
+                      ultimo_heartbeat_hace: {type: number, description: Segundos.}
+    Error:
+      type: object
+      required: [codigo, contenido]
+      properties:
+        codigo: {type: integer}
+        contenido:
+          type: object
+          required: [error]
+          properties:
+            error:
+              type: object
+              required: [tipo, mensaje, detalles]
+              properties:
+                tipo:
+                  type: string
+                  enum: [CUERPO_VACIO, JSON_INVALIDO, IMAGEN_NO_PERMITIDA, RUTA_INEXISTENTE, METODO_NO_PERMITIDO,
+                         CUERPO_DEMASIADO_GRANDE, TIPO_DE_CONTENIDO, PAYLOAD_INVALIDO, IMAGEN_INEXISTENTE,
+                         TAREA_RECHAZADA, ERROR_INTERNO, TAREA_FALLIDA, REGISTRY_NO_DISPONIBLE,
+                         SERVICIO_NO_DISPONIBLE, TAREA_SIN_RESPUESTA, NODO_NO_DISPONIBLE, CLUSTER_NO_DISPONIBLE]
+                mensaje: {type: string}
+                detalles:
+                  type: array
+                  description: 'Sólo en `PAYLOAD_INVALIDO`: `[{"campo": "parametros", "problema": "no puede ser null"}]`.'
+                  items:
+                    type: object
+                    properties:
+                      campo: {type: string}
+                      problema: {type: string}
