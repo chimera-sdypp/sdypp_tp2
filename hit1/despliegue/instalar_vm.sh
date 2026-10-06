@@ -6,8 +6,8 @@
 #   (crear ~/.env en la VM, ver "Despliegue" en hit1/README.md)
 #   ssh -i clave.pem ubuntu@<IP> sudo bash instalar_vm.sh
 #
-# Deja /opt/sdypp-tp2-hit1 y un timer de systemd (sdypp-tp2-hit1.timer) que cada minuto
-# hace `docker compose pull && up -d`: la VM trae sola la imagen que el CI publica en
+# Deja /opt/sdypp-tp2-hit1 y un timer de systemd (sdypp-tp2-hit1.timer) que cada 5
+# minutos hace `docker compose pull && up -d`: la VM trae sola la imagen que el CI publica en
 # GHCR, sin ninguna credencial en GitHub.
 set -euo pipefail
 
@@ -38,19 +38,21 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/sdypp-tp2-hit1
-ExecStart=/usr/bin/docker compose pull --quiet servidor
-ExecStart=/usr/bin/docker compose up -d --no-build --remove-orphans
+# Un solo candado para los timers de todos los hits: si el `image prune` de uno corre
+# mientras otro baja una imagen, Docker pierde la descarga ("lease does not exist").
+ExecStart=/usr/bin/flock /run/lock/sdypp-tp2-despliegue.lock /usr/bin/docker compose pull --quiet servidor
+ExecStart=/usr/bin/flock /run/lock/sdypp-tp2-despliegue.lock /usr/bin/docker compose up -d --no-build --remove-orphans
 # Las imágenes :latest reemplazadas no se acumulan en el disco.
-ExecStart=/usr/bin/docker image prune -f
+ExecStart=/usr/bin/flock /run/lock/sdypp-tp2-despliegue.lock /usr/bin/docker image prune -f
 UNIT
 
 cat > /etc/systemd/system/sdypp-tp2-hit1.timer <<'UNIT'
 [Unit]
-Description=TP2 Hit 1: buscar una imagen nueva cada minuto
+Description=TP2 Hit 1: buscar una imagen nueva cada 5 minutos
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=1min
+OnUnitActiveSec=5min
 AccuracySec=5s
 
 [Install]

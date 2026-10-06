@@ -342,7 +342,7 @@ hits anteriores, la VM trae sola la imagen que publica el CI:
 flowchart LR
     G["GitHub Actions<br/>push a main"] -- "tests e integración en verde ⇒<br/>publica la imagen" --> R[(GHCR)]
     subgraph VM[VM AWS EC2]
-        T["timer de systemd<br/>cada minuto"] -- "compose pull + up -d" --> X["nginx :8083"]
+        T["timer de systemd<br/>cada 5 minutos"] -- "compose pull + up -d" --> X["nginx :8083"]
         X --> N1[nodo 1] & N2[nodo 2] & N3[nodo 3]
     end
     T -- "¿hay imagen nueva?" --> R
@@ -351,16 +351,16 @@ flowchart LR
 - En cada push a `main`, después de gitleaks, los tests y la integración (que incluye matar al
   coordinador y a un ejecutor), el CI publica la imagen de los nodos en GHCR
   (`ghcr.io/chimera-sdypp/sdypp_tp2-hit3`) con el `GITHUB_TOKEN` efímero del job.
-- En la VM, un timer de systemd hace `docker compose pull && up -d` cada minuto. Los 3 nodos usan
-  esa imagen y nginx, la oficial.
+- En la VM, un timer de systemd hace `docker compose pull && up -d` cada 5 minutos, con el mismo
+  candado (`flock`) que los timers de los otros hits. Los 3 nodos usan esa imagen y nginx, la oficial.
 - Después, el CI prueba lo desplegado: una suma (`200`, con el nodo que la ejecutó), una división
   por cero (`422`) y que el coordinador vea a los 3 nodos vivos.
 - El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales. Lo cambia el
   dueño del repositorio una sola vez, en *Package settings → Change visibility*.
 
 Para probar la caída en la VM: `docker compose -f /opt/sdypp-tp2-hit3/docker-compose.yml kill
-nodo3`. El nodo vuelve solo en el siguiente `up -d` del timer (en menos de un minuto) y recupera el
-puesto de coordinador.
+nodo3`. El nodo vuelve solo en el siguiente `up -d` del timer (en hasta 5 minutos; para no esperar,
+`... up -d nodo3`) y recupera el puesto de coordinador.
 
 Instalarlo en una VM Ubuntu con Docker:
 

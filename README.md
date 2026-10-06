@@ -45,7 +45,7 @@ docker compose up --build -d
 
 Cada push corre en GitHub Actions `gitleaks` (falla si hay un secreto en el código) y los tests
 unitarios y de integración de los tres hits. En `main`, además, publica la imagen de cada servidor en
-GHCR. La VM baja la imagen nueva en menos de un minuto, sin credenciales en GitHub, y un último
+GHCR. La VM baja la imagen nueva en hasta 5 minutos, sin credenciales en GitHub, y un último
 job prueba el servidor desplegado desde Internet.
 
 ## Contrato público y Swagger

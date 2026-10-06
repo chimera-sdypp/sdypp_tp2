@@ -204,7 +204,7 @@ El Hit 2 está preparado para desplegarse en la misma VM Ubuntu de AWS EC2 (puer
 flowchart LR
     G["GitHub Actions<br/>push a main"] -- "tests en verde ⇒<br/>publica la imagen" --> R[(GHCR)]
     subgraph VM[VM AWS EC2]
-        T["timer de systemd<br/>cada minuto"] -- "compose pull + up -d" --> S[Servidor Hit 2 :8082]
+        T["timer de systemd<br/>cada 5 minutos"] -- "compose pull + up -d" --> S[Servidor Hit 2 :8082]
     end
     T -- "¿hay imagen nueva?" --> R
 ```
