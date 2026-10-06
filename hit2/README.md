@@ -1,6 +1,6 @@
 # Hit 2 — Concurrencia, Pool de Workers y Exclusión Mutua
 
-Servidor HTTP de tareas remotas extender con **concurrencia multihilo**, **pool de workers configurable**, **cola de tareas con exclusión mutua (Mutex)** y **relojes lógicos de Lamport [LAM78]**.
+El servidor HTTP de tareas remotas del [Hit 1](../hit1/), extendido con **concurrencia multihilo**, **pool de workers configurable**, **cola de tareas con exclusión mutua (Mutex)** y **relojes lógicos de Lamport [LAM78]**.
 
 Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis con la **Ley de Amdahl [AMD67]**.
 
@@ -196,9 +196,42 @@ Al ejecutar tanto el cliente, el servidor FastAPI y todos los contenedores de wo
 
 ---
 
-## 6. Despliegue
+## 6. Decisiones de Diseño
 
-El Hit 2 está preparado para desplegarse en la misma VM Ubuntu de AWS EC2 (puerto `8082`), conviviendo con Hit 1 (`8081`) y TP1 (`8080`).
+### Exclusión mutua con un mutex local, no distribuido
+
+El enunciado sugiere un mutex distribuido o Ricart-Agrawala [RIC81]. Usamos un `threading.Lock`, y la razón es qué hay que proteger:
+
+- **Qué se protege**: la cola de tareas y el contador de workers activos. Los dos viven en la memoria de **un único proceso**, el servidor.
+- **Quiénes compiten**: hilos de ese mismo proceso. Uno por cada pedido HTTP que encola y uno por cada worker que termina y despacha la tarea siguiente.
+- **Por qué alcanza un lock local**: todos los que pueden tocar la cola comparten memoria, así que comparten el lock. Un mutex distribuido resuelve otro problema: procesos en máquinas distintas, sin memoria compartida, que se ponen de acuerdo por mensajes. Acá no hay un segundo proceso que vea la cola; usarlo sumaría mensajes de red y casos de falla sin proteger nada más.
+- **Visto desde afuera, es el algoritmo centralizado** de exclusión mutua [TAN17, cap. 6]: los clientes piden un recurso (un worker), un coordinador (el servidor) encola los pedidos y lo concede cuando se libera uno. El mutex local protege el estado interno de ese coordinador.
+- **Cuándo dejaría de alcanzar**: con dos o más instancias del servidor compartiendo una misma cola. Cada proceso tendría su propio lock, que no excluye al del otro. Haría falta un lock en un servicio común a todas (por ejemplo Redis) o Ricart-Agrawala entre las instancias, que ordena los pedidos de entrada a la sección crítica con timestamps de Lamport como los que ya viajan en los mensajes. En el [Hit 3](../hit3/) hay varias instancias, pero no comparten cola: cada tarea la sigue su nodo de entrada y el coordinador sólo decide a qué nodo va.
+
+La sección crítica es corta: operaciones sobre la heap y el contador. El contenedor se ejecuta **fuera** del lock y el pedido espera el resultado con un `Future`, así que una tarea lenta no frena a las demás.
+
+### Pool: un hilo por tarea en curso, con tope
+
+- No hay $N$ hilos fijos esperando trabajo. Cuando hay un lugar libre, el pool lanza un hilo para esa tarea; el contador de workers activos, que sólo se toca con el mutex tomado, garantiza que nunca corran más de `TP2_WORKERS_MAX` contenedores a la vez. Al terminar, ese mismo hilo despacha la tarea siguiente de la cola.
+- **Hilos y no procesos**: el worker pasa casi todo su tiempo esperando al daemon de Docker y al contenedor (E/S), no usando CPU de Python, así que el GIL no limita.
+- Cada tarea corre en **su propio contenedor**, que se crea y se borra como en el Hit 1.
+- `TP2_WORKERS_MAX` se lee al arrancar: para cambiarlo hay que reiniciar el servidor, que es lo que hace el benchmark entre una medición y la siguiente.
+
+### Relojes de Lamport
+
+- El timestamp viaja en la cabecera `X-Lamport-Clock`, en el pedido y en la respuesta (que además lo repite en el cuerpo, `lamport_ts`). No va en el JSON del pedido para no cambiar el payload del Hit 1.
+- El servidor incrementa su reloj **una sola vez por respuesta**: el valor de la cabecera y el del cuerpo son el mismo.
+- **Limitación**: un pedido sin la cabecera entra con timestamp `0` y queda primero en la cola. El orden supone clientes que respetan el protocolo.
+
+### Lo demás es el Hit 1
+
+La validación del payload, el sobre de las respuestas, la lista blanca de imágenes, las credenciales del registry y el ciclo de vida del contenedor tarea no cambian: ver las decisiones del [Hit 1](../hit1/README.md#decisiones-de-diseño).
+
+---
+
+## 7. Despliegue
+
+Público en **http://18.231.127.74:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
 
 ```mermaid
 flowchart LR
@@ -209,8 +242,10 @@ flowchart LR
     T -- "¿hay imagen nueva?" --> R
 ```
 
-- En cada push a `main`, el CI (`.github/workflows/ci.yml`) ejecuta gitleaks, tests unitarios y de integración de ambos hits, publica `ghcr.io/<repo>-hit2:latest` y prueba el despliegue público con el cliente.
-- En la VM, un timer de systemd (`sdypp-tp2-hit2.timer`) ejecuta periódicamente `docker compose pull && up -d`.
+- En cada push a `main`, después de gitleaks y de los tests unitarios y de integración, el CI (`.github/workflows/ci.yml`) publica la imagen del servidor en GHCR (`ghcr.io/chimera-sdypp/sdypp_tp2-hit2`) con el `GITHUB_TOKEN` efímero del job.
+- En la VM, un timer de systemd (`sdypp-tp2-hit2.timer`) hace `docker compose pull && up -d` cada 5 minutos, con el mismo candado (`flock`) que los timers de los otros hits. GitHub no tiene ninguna credencial de la VM.
+- Después, el CI prueba lo desplegado: manda con el cliente una suma (`200`, con su `lamport_ts`) y una división por cero (`422`) a la URL pública.
+- El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales.
 
 ### Instalación en la VM:
 
@@ -218,7 +253,7 @@ flowchart LR
 scp -i clave.pem hit2/despliegue/instalar_vm.sh hit2/docker-compose.yml ubuntu@<IP>:
 ssh -i clave.pem ubuntu@<IP>
 # en la VM: crear ~/.env a partir de .env.example, con TP2_PUERTO=8082 y
-#   TP2_IMAGEN=ghcr.io/<repo>-hit2:latest; luego:
+#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit2:latest; luego:
 sudo bash instalar_vm.sh && rm ~/.env
 ```
 

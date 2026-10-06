@@ -176,8 +176,9 @@ mensajes a varios nodos salen **en paralelo**, para no sumar los timeouts de los
 
 ### Diagrama de secuencia: se mata al coordinador
 
-Una caída real (sin carga, [`mediciones/sin_carga_eleccion.log`](mediciones/sin_carga_eleccion.log)),
-con los tiempos desde el `kill`:
+Una caída real, sin carga, con los tiempos desde el `kill`. Debajo del diagrama está el log de esa
+elección, tal como lo guarda `cliente/caida_coordinador.py` en `mediciones/sin_carga_eleccion.log`
+(los `.log` no se versionan):
 
 ```mermaid
 sequenceDiagram
