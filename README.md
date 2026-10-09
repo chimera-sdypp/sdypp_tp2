@@ -48,6 +48,10 @@ unitarios y de integración de los tres hits. En `main`, además, publica la ima
 GHCR. La VM baja la imagen nueva en hasta 5 minutos, sin credenciales en GitHub, y un último
 job prueba el servidor desplegado desde Internet.
 
+## Informe del Trabajo Práctico
+
+El informe del trabajo práctico puede verse desde [aquí](/informe-tp2-cerberus.pdf).
+
 ## Contrato público y Swagger
 
 - [`contrato-publico.md`](contrato-publico.md): la API de los tres hits, con ejemplos.
