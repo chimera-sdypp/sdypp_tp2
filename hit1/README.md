@@ -44,6 +44,10 @@ curl -s -X POST localhost:8080/getRemoteTask \
   -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0.0"}'
 ```
 
+## Demo
+
+[![Demo del Hit #1](https://img.youtube.com/vi/aX1pN7a9EjA/maxresdefault.jpg)](https://youtu.be/aX1pN7a9EjA)
+
 ### Publicar el servicio tarea en Docker Hub
 
 La imagen está en un repositorio **privado** de Docker Hub (`cerberusdistribuido/tarea`).
