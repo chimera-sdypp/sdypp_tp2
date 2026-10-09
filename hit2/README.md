@@ -6,6 +6,12 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
 
 ---
 
+## Demo
+
+[![Demo del Hit #2](https://img.youtube.com/vi/cYUaQ5mu_gc/maxresdefault.jpg)](https://youtu.be/cYUaQ5mu_gc)
+
+---
+
 ## 1. Arquitectura y Componentes del Hit #2
 
 ```
