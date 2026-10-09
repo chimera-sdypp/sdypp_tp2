@@ -16,6 +16,10 @@ los demás detectan la caída, eligen otro y las tareas siguen saliendo.
 | Tiempo de recuperación ante la caída del coordinador | [Tiempo de recuperación](#tiempo-de-recuperación) |
 | Cómo se redistribuyen las tareas pendientes | [Redistribución de tareas](#redistribución-de-las-tareas-pendientes) |
 
+## Demo
+
+[![Demo del Hit #3](https://img.youtube.com/vi/wcXAolw04bI/maxresdefault.jpg)](https://youtu.be/wcXAolw04bI)
+
 ## Cómo correrlo
 
 Requisitos: Docker con Compose v2, Linux (o WSL2) y Python 3 para el cliente. Todo desde `hit3/`.
