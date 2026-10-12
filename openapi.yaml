@@ -66,7 +66,7 @@ paths:
                 hit2: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7, lamport_ts: 12820}}}
                 hit3: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7, nodo: 3}}}
         '400': {$ref: '#/components/responses/Error', description: 'Cuerpo vacío o JSON inválido: `CUERPO_VACIO`, `JSON_INVALIDO`.'}
-        '403': {$ref: '#/components/responses/Error', description: 'La imagen no está en la lista blanca: `IMAGEN_NO_PERMITIDA`.'}
+        '403': {$ref: '#/components/responses/Error', description: 'La imagen no está en la lista blanca, o no coincide con el digest que la lista fija: `IMAGEN_NO_PERMITIDA`.'}
         '413': {$ref: '#/components/responses/Error', description: 'Más de 64 KiB: `CUERPO_DEMASIADO_GRANDE`.'}
         '415': {$ref: '#/components/responses/Error', description: '`Content-Type` distinto de `application/json`: `TIPO_DE_CONTENIDO`.'}
         '422':
@@ -78,7 +78,8 @@ paths:
         '502':
           $ref: '#/components/responses/Error'
           description: |
-            `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE`, o en el Hit 3 `NODO_NO_DISPONIBLE` (lo genera
+            `TAREA_FALLIDA` (también si la imagen no es un servicio tarea), `REGISTRY_NO_DISPONIBLE`,
+            o en el Hit 3 `NODO_NO_DISPONIBLE` (lo genera
             nginx: no respondió ningún nodo o se cayó el que atendía). Reintentar es seguro: las
             tareas no tienen efectos secundarios.
         '503': {$ref: '#/components/responses/Error', description: 'Docker no responde (`SERVICIO_NO_DISPONIBLE`) o, en el Hit 3, no hay coordinador ni nodos vivos (`CLUSTER_NO_DISPONIBLE`).'}

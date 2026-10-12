@@ -337,6 +337,20 @@ sequenceDiagram
   (1 s), así que en ráfagas puede asignar con datos un poco viejos.
 - **La tarea del nodo de entrada que se cae se pierde** (ver arriba).
 
+## Imagen privada y validación (R1 y R2)
+
+Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo código); acá la valida el nodo de entrada antes de pedir asignación, y otra vez el que la ejecuta.
+`evidencias/r1_pull_privado.sh hit3` y `evidencias/r2_imagenes.sh hit3` dan:
+
+| Caso | HTTP | `tipo` |
+|---|---|---|
+| R1: pull por el servidor sin token / con token | 422 / 200 | `IMAGEN_INEXISTENTE` / — |
+| Válida, por tag o por digest | 200 | — |
+| Mal formada (mayúsculas, sin versión, `latest`, otro comando) | 422 | `PAYLOAD_INVALIDO` |
+| No permitida, u otro contenido que el digest fijado | 403 | `IMAGEN_NO_PERMITIDA` |
+| Inexistente (tag o digest) | 422 | `IMAGEN_INEXISTENTE` |
+| No es un servicio tarea | 502 | `TAREA_FALLIDA` |
+
 ## Despliegue
 
 En la misma VM de AWS EC2 que los Hits 1 y 2: **http://18.231.127.74:8083/health**. Como en los

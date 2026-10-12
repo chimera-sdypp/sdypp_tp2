@@ -28,7 +28,7 @@ trap bajar EXIT
 
 cat > "$ENTORNO" <<FIN
 DOCKER_GID=$(stat -c %g /var/run/docker.sock)
-TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea-prueba,cerberusdistribuido/tarea
+TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea-prueba,cerberusdistribuido/tarea,cerberusdistribuido/no-es-tarea,cerberusdistribuido/tarea-fijada@sha256:$(printf '0%.0s' {1..64})
 TP2_PUERTO=$PUERTO
 TP2_PUERTO_NODO1=$PUERTO_NODO1
 TP2_TIMEOUT_EJECUCION=4
@@ -39,6 +39,12 @@ FIN
 echo "==> imágenes de la tarea de prueba y de la tarea real"
 docker build -q -t cerberusdistribuido/tarea-prueba:test "$AQUI/tarea_prueba" >/dev/null
 docker build -q -t cerberusdistribuido/tarea:test "$HIT3/tarea" >/dev/null
+echo "==> imágenes para la validación (R2): una que no es servicio tarea y una con otro digest"
+docker build -q -t cerberusdistribuido/no-es-tarea:test - >/dev/null <<'FIN'
+FROM python:3.14-slim
+CMD ["python", "-c", "raise SystemExit(3)"]
+FIN
+docker tag cerberusdistribuido/tarea-prueba:test cerberusdistribuido/tarea-fijada:test
 echo "==> cluster (build + up, espera a healthy)"
 "${COMPOSE[@]}" up --build -d --wait
 echo "==> tests de integración"

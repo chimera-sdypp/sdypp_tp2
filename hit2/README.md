@@ -202,7 +202,23 @@ Al ejecutar tanto el cliente, el servidor FastAPI y todos los contenedores de wo
 
 ---
 
-## 6. Despliegue
+## 6. Imagen privada y validación (R1 y R2)
+
+Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo código); acá la imagen se valida antes de encolar la tarea.
+`evidencias/r1_pull_privado.sh hit2` y `evidencias/r2_imagenes.sh hit2` dan:
+
+| Caso | HTTP | `tipo` |
+|---|---|---|
+| R1: pull por el servidor sin token / con token | 422 / 200 | `IMAGEN_INEXISTENTE` / — |
+| Válida, por tag o por digest | 200 | — |
+| Mal formada (mayúsculas, sin versión, `latest`, otro comando) | 422 | `PAYLOAD_INVALIDO` |
+| No permitida, u otro contenido que el digest fijado | 403 | `IMAGEN_NO_PERMITIDA` |
+| Inexistente (tag o digest) | 422 | `IMAGEN_INEXISTENTE` |
+| No es un servicio tarea | 502 | `TAREA_FALLIDA` |
+
+---
+
+## 7. Despliegue
 
 El Hit 2 está preparado para desplegarse en la misma VM Ubuntu de AWS EC2 (puerto `8082`), conviviendo con Hit 1 (`8081`) y TP1 (`8080`).
 

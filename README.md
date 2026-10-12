@@ -31,6 +31,8 @@ validación, el contrato con el servicio tarea y, en el Hit 3, los mensajes entr
 | `despliegue/` | El script que instala el hit en la VM |
 | `mediciones/` | (Hits 2 y 3) Los datos y gráficos del informe |
 
+Los scripts de evidencia de R1 y R2 están en [`evidencias/`](evidencias/) (p. ej. `evidencias/r2_imagenes.sh hit2`).
+
 ## Correrlo en local
 
 Hace falta Docker con Compose v2 y Python 3 para el cliente. Para cualquier hit:
