@@ -27,6 +27,7 @@ class Config:
     registry: str = "docker.io"
     registry_usuario: str = ""
     registry_token: str = ""
+    api_token: str = ""
 
     @classmethod
     def desde_entorno(cls, entorno=None):
@@ -42,5 +43,6 @@ class Config:
             workers_max=int(e.get("TP2_WORKERS_MAX") or cls.workers_max),
             registry_usuario=e.get("TP2_REGISTRY_USUARIO", ""),
             registry_token=_leer_secreto(e.get("TP2_REGISTRY_TOKEN_ARCHIVO", "")),
+            api_token=e.get("TP2_API_TOKEN", "").strip(),
         )
 

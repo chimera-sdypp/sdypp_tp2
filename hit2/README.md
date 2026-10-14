@@ -249,7 +249,75 @@ Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo c�
 
 ---
 
-## 8. Despliegue
+## 8. Tareas Diversas y Matriz de Parámetros (R5)
+
+Para evaluar el comportamiento del sistema bajo cargas heterogéneas, se desarrollaron **3 imágenes de tareas especializadas**:
+1. **CPU-bound (`cerberusdistribuido/tarea-cpu:1.0.0`)**: cálculo intensivo de criba de números primos y Proof-of-Work SHA-256 (`hit2/tareas/cpu/`).
+2. **Procesamiento de Archivos (`cerberusdistribuido/tarea-archivos:1.0.0`)**: ingestión de $V_1$ archivos aplicando un pipeline de $V_2$ acciones (`hit2/tareas/archivos/`).
+3. **Fallas y Timeouts (`cerberusdistribuido/tarea-falla:1.0.0`)**: inyección de excepciones 500, timeouts controlados y validación de parámetros (`hit2/tareas/falla/`).
+
+### 8.1 Combinaciones de Parámetros por Tarea (Válido, Límite, Inválido)
+
+| Tarea | Caso de Prueba | HTTP Esp. | HTTP Obt. | `tipo` Error | Latencia | Estado |
+|---|---|---|---|---|---|---|
+| `CPU-bound` | Válido (primos 15k) | 200 | 200 | `—` | 0.73 s | **OK** |
+| `CPU-bound` | Límite (primos 100k, saturación CPU) | 200 | 200 | `—` | 0.64 s | **OK** |
+| `CPU-bound` | Inválido (límite negativo) | 422 | 422 | `TAREA_RECHAZADA` | 0.62 s | **OK** |
+| `Archivos` | Válido (2 archivos × 2 acciones) | 200 | 200 | `—` | 0.83 s | **OK** |
+| `Archivos` | Límite (100 archivos × 5 acciones) | 200 | 200 | `—` | 1.33 s | **OK** |
+| `Archivos` | Inválido (acción inexistente) | 422 | 422 | `TAREA_RECHAZADA` | 1.18 s | **OK** |
+| `Falla / Timeout` | Válido (dormir 0.3s) | 200 | 200 | `—` | 1.38 s | **OK** |
+| `Falla / Timeout` | Límite (excede timeout servidor: 8s > 4s) | 504 | 504 | `TAREA_SIN_RESPUESTA` | 4.95 s | **OK** |
+| `Falla / Timeout` | Inválido (división por cero) | 422 | 422 | `TAREA_RECHAZADA` | 0.64 s | **OK** |
+| `Falla / Timeout` | Falla intencional (explotar 500 → 502) | 502 | 502 | `TAREA_FALLIDA` | 0.82 s | **OK** |
+
+### 8.2 Matriz Obligatoria ($V_1$ Archivos × $V_2$ Acciones × $V_3$ Concurrencia)
+
+Medición empírica automatizada mediante `evidencias/r5_generador_carga.py` con 4 workers en el pool:
+
+| $V_1$ (Archivos) | $V_2$ (Acciones) | $V_3$ (Concurrencia) | Latencia p50 | Latencia p95 | Throughput (tpm) | Tasa Error | Observaciones (Cuello de Botella) |
+|---|---|---|---|---|---|---|---|
+| 1 | 1 | 1 | 0.59 s | 0.59 s | **101.9** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 1 | 1 | 10 | 1.68 s | 2.72 s | **213.4** | 0.0% | Encolamiento ordenado por Lamport. 4 workers activos al 100% |
+| 1 | 1 | 50 | 6.83 s | 18.77 s | **156.0** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 1 | 3 | 1 | 0.71 s | 0.71 s | **84.1** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 1 | 3 | 10 | 1.61 s | 2.32 s | **232.9** | 0.0% | Encolamiento ordenado por Lamport. 4 workers activos al 100% |
+| 1 | 3 | 50 | 7.03 s | 18.05 s | **161.6** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 1 | 5 | 1 | 0.62 s | 0.62 s | **96.9** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 1 | 5 | 10 | 2.09 s | 2.99 s | **196.4** | 0.0% | Encolamiento ordenado por Lamport. 4 workers activos al 100% |
+| 1 | 5 | 50 | 11.83 s | 17.82 s | **162.1** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 10 | 1 | 1 | 0.62 s | 0.62 s | **97.1** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 10 | 1 | 10 | 2.73 s | 4.99 s | **127.1** | 0.0% | Encolamiento ordenado por Lamport. 4 workers activos al 100% |
+| 10 | 1 | 50 | 11.66 s | 18.81 s | **147.3** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 10 | 3 | 1 | 1.34 s | 1.34 s | **44.6** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 10 | 3 | 10 | 5.31 s | 6.72 s | **82.6** | 0.0% | Encolamiento ordenado por Lamport. 4 workers activos al 100% |
+| 10 | 3 | 50 | 12.35 s | 27.77 s | **103.1** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 10 | 5 | 1 | 1.45 s | 1.45 s | **41.4** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 10 | 5 | 10 | 3.32 s | 4.90 s | **116.0** | 0.0% | Encolamiento ordenado por Lamport. 4 workers activos al 100% |
+| 10 | 5 | 50 | 18.61 s | 31.33 s | **92.8** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 100 | 1 | 1 | 0.93 s | 0.93 s | **64.2** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 100 | 1 | 10 | 3.74 s | 5.68 s | **99.9** | 0.0% | Contención moderada en cola de tareas. CPU del contenedor en 100% |
+| 100 | 1 | 50 | 22.31 s | 34.61 s | **83.5** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 100 | 3 | 1 | 1.22 s | 1.22 s | **49.1** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 100 | 3 | 10 | 5.20 s | 9.23 s | **68.3** | 0.0% | Contención moderada en cola de tareas. CPU del contenedor en 100% |
+| 100 | 3 | 50 | 16.02 s | 30.84 s | **92.7** | 0.0% | Alta contención en socket de Docker (/var/run/docker.sock) y scheduler SO |
+| 100 | 5 | 1 | 1.98 s | 1.98 s | **30.3** | 0.0% | Sin contención. Latencia dominada por tiempo de ciclo Docker + ejecución |
+| 100 | 5 | 10 | 4.37 s | 6.11 s | **94.5** | 0.0% | Contención moderada en cola de tareas. CPU del contenedor en 100% |
+| 100 | 5 | 50 | 13.03 s | 26.50 s | **108.2** | 0.0% | Saturación severa: contención en Docker socket + cola profunda (46 encoladas) |
+
+### 8.3 Autenticación y Rechazo de Bots (R4)
+- **Total solicitudes bots sin token:** 18
+- **Rechazadas con HTTP 401 NO_AUTORIZADO:** 18 (100.0%)
+- Las peticiones no autorizadas son abortadas en < 3 ms antes de tocar la cola ni instanciar contenedores.
+
+Ejecutar la evidencia completa:
+```bash
+./evidencias/r5_matriz_parametros.sh hit2
+```
+
+---
+
+## 9. Despliegue
 
 Público en **http://18.231.127.74:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
 

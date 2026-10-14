@@ -267,3 +267,29 @@ def test_logs_en_disco_y_en_memoria(armar, tmp_path):
     memoria = next(h for h in logging.getLogger("tp2.servidor").handlers if hasattr(h, "registros"))
     assert any("POST /getRemoteTask | 200" in linea for linea in memoria.registros)
     assert "POST /getRemoteTask | 200" in (tmp_path / "servidor.log").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- autenticación de clientes
+def test_autenticacion_sin_token_falla_401_cuando_servidor_tiene_token(armar):
+    cliente, lanzador = armar(api_token="secreto-tp2")
+    _sobre(_post(cliente, VALIDO), 401, "NO_AUTORIZADO")
+    assert lanzador.llamadas == []
+
+
+def test_autenticacion_con_token_invalido_falla_401(armar):
+    cliente, lanzador = armar(api_token="secreto-tp2")
+    _sobre(_post(cliente, VALIDO, headers={"Authorization": "Bearer incorrecto"}), 401, "NO_AUTORIZADO")
+    assert lanzador.llamadas == []
+
+
+def test_autenticacion_con_token_valido_autoriza_bearer(armar):
+    cliente, lanzador = armar(api_token="secreto-tp2")
+    _sobre(_post(cliente, VALIDO, headers={"Authorization": "Bearer secreto-tp2"}), 200)
+    assert len(lanzador.llamadas) == 1
+
+
+def test_autenticacion_con_token_valido_autoriza_x_api_token(armar):
+    cliente, lanzador = armar(api_token="secreto-tp2")
+    _sobre(_post(cliente, VALIDO, headers={"X-API-Token": "secreto-tp2"}), 200)
+    assert len(lanzador.llamadas) == 1
+

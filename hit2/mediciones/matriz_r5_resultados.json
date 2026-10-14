@@ -1,0 +1,612 @@
+{
+  "timestamp": 1792004547.2543054,
+  "servidor": "http://127.0.0.1:18090",
+  "pruebas_tareas": [
+    {
+      "tarea": "CPU-bound",
+      "caso": "V\u00e1lido (primos 15k)",
+      "http_esperado": 200,
+      "http_obtenido": 200,
+      "tipo_error": "\u2014",
+      "mensaje": "OK (resultado devuelto)",
+      "latencia_s": 0.734,
+      "cumple": true
+    },
+    {
+      "tarea": "CPU-bound",
+      "caso": "L\u00edmite (primos 100k, alto uso CPU)",
+      "http_esperado": 200,
+      "http_obtenido": 200,
+      "tipo_error": "\u2014",
+      "mensaje": "OK (resultado devuelto)",
+      "latencia_s": 0.636,
+      "cumple": true
+    },
+    {
+      "tarea": "CPU-bound",
+      "caso": "Inv\u00e1lido (l\u00edmite negativo)",
+      "http_esperado": 422,
+      "http_obtenido": 422,
+      "tipo_error": "TAREA_RECHAZADA",
+      "mensaje": "'limite' debe ser un entero mayor a 1",
+      "latencia_s": 0.624,
+      "cumple": true
+    },
+    {
+      "tarea": "Archivos",
+      "caso": "V\u00e1lido (2 archivos x 2 acciones)",
+      "http_esperado": 200,
+      "http_obtenido": 200,
+      "tipo_error": "\u2014",
+      "mensaje": "OK (resultado devuelto)",
+      "latencia_s": 0.831,
+      "cumple": true
+    },
+    {
+      "tarea": "Archivos",
+      "caso": "L\u00edmite (100 archivos x 5 acciones)",
+      "http_esperado": 200,
+      "http_obtenido": 200,
+      "tipo_error": "\u2014",
+      "mensaje": "OK (resultado devuelto)",
+      "latencia_s": 1.333,
+      "cumple": true
+    },
+    {
+      "tarea": "Archivos",
+      "caso": "Inv\u00e1lido (acci\u00f3n inexistente)",
+      "http_esperado": 422,
+      "http_obtenido": 422,
+      "tipo_error": "TAREA_RECHAZADA",
+      "mensaje": "acci\u00f3n inv\u00e1lida 'accion_falsa'. Permitidas: ['analisis_frecuencia', 'comprimir', 'contar_palabras', 'hash_sha256', 'rotar_lineas']",
+      "latencia_s": 1.185,
+      "cumple": true
+    },
+    {
+      "tarea": "Falla / Timeout",
+      "caso": "V\u00e1lido (dormir 0.3s)",
+      "http_esperado": 200,
+      "http_obtenido": 200,
+      "tipo_error": "\u2014",
+      "mensaje": "OK (resultado devuelto)",
+      "latencia_s": 1.375,
+      "cumple": true
+    },
+    {
+      "tarea": "Falla / Timeout",
+      "caso": "L\u00edmite (excede timeout servidor: dormir 8s)",
+      "http_esperado": 504,
+      "http_obtenido": 504,
+      "tipo_error": "TAREA_SIN_RESPUESTA",
+      "mensaje": "la tarea no respondi\u00f3 en 4 s",
+      "latencia_s": 4.95,
+      "cumple": true
+    },
+    {
+      "tarea": "Falla / Timeout",
+      "caso": "Inv\u00e1lido (divisi\u00f3n por cero)",
+      "http_esperado": 422,
+      "http_obtenido": 422,
+      "tipo_error": "TAREA_RECHAZADA",
+      "mensaje": "divisi\u00f3n por cero",
+      "latencia_s": 0.639,
+      "cumple": true
+    },
+    {
+      "tarea": "Falla / Timeout",
+      "caso": "Falla intencional (explotar 500 -> 502)",
+      "http_esperado": 502,
+      "http_obtenido": 502,
+      "tipo_error": "TAREA_FALLIDA",
+      "mensaje": "la tarea fall\u00f3 o devolvi\u00f3 una respuesta inv\u00e1lida",
+      "latencia_s": 0.825,
+      "cumple": true
+    }
+  ],
+  "matriz_v1_v2_v3": [
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 1,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 0.589,
+      "p95_latencia_s": 0.589,
+      "throughput_tpm": 101.9,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 0.59,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 1,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 1.679,
+      "p95_latencia_s": 2.719,
+      "throughput_tpm": 213.4,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 2.53,
+      "observaciones": "Encolamiento ordenado por Lamport. 4 workers activos al 100%"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 1,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 6.827,
+      "p95_latencia_s": 18.768,
+      "throughput_tpm": 156.0,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 18.84,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 3,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 0.713,
+      "p95_latencia_s": 0.713,
+      "throughput_tpm": 84.1,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 0.71,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 3,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 1.608,
+      "p95_latencia_s": 2.32,
+      "throughput_tpm": 232.9,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 2.32,
+      "observaciones": "Encolamiento ordenado por Lamport. 4 workers activos al 100%"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 3,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 7.031,
+      "p95_latencia_s": 18.052,
+      "throughput_tpm": 161.6,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 18.2,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 5,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 0.619,
+      "p95_latencia_s": 0.619,
+      "throughput_tpm": 96.9,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 0.62,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 5,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 2.086,
+      "p95_latencia_s": 2.986,
+      "throughput_tpm": 196.4,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 2.75,
+      "observaciones": "Encolamiento ordenado por Lamport. 4 workers activos al 100%"
+    },
+    {
+      "v1_archivos": 1,
+      "v2_acciones": 5,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 11.832,
+      "p95_latencia_s": 17.817,
+      "throughput_tpm": 162.1,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 18.14,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 1,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 0.618,
+      "p95_latencia_s": 0.618,
+      "throughput_tpm": 97.1,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 0.62,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 1,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 2.729,
+      "p95_latencia_s": 4.989,
+      "throughput_tpm": 127.1,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 4.25,
+      "observaciones": "Encolamiento ordenado por Lamport. 4 workers activos al 100%"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 1,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 11.66,
+      "p95_latencia_s": 18.808,
+      "throughput_tpm": 147.3,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 19.95,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 3,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 1.344,
+      "p95_latencia_s": 1.344,
+      "throughput_tpm": 44.6,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 1.34,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 3,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 5.306,
+      "p95_latencia_s": 6.723,
+      "throughput_tpm": 82.6,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 6.54,
+      "observaciones": "Encolamiento ordenado por Lamport. 4 workers activos al 100%"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 3,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 12.345,
+      "p95_latencia_s": 27.773,
+      "throughput_tpm": 103.1,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 28.52,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 5,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 1.451,
+      "p95_latencia_s": 1.451,
+      "throughput_tpm": 41.4,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 1.45,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 5,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 3.325,
+      "p95_latencia_s": 4.905,
+      "throughput_tpm": 116.0,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 4.65,
+      "observaciones": "Encolamiento ordenado por Lamport. 4 workers activos al 100%"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 5,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 18.612,
+      "p95_latencia_s": 31.329,
+      "throughput_tpm": 92.8,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 31.68,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 1,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 0.934,
+      "p95_latencia_s": 0.934,
+      "throughput_tpm": 64.2,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 0.93,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 1,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 3.741,
+      "p95_latencia_s": 5.677,
+      "throughput_tpm": 99.9,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 5.4,
+      "observaciones": "Contenci\u00f3n moderada en cola de tareas. CPU del contenedor en 100%"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 1,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 22.306,
+      "p95_latencia_s": 34.609,
+      "throughput_tpm": 83.5,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 35.2,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 3,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 1.221,
+      "p95_latencia_s": 1.221,
+      "throughput_tpm": 49.1,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 1.22,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 3,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 5.195,
+      "p95_latencia_s": 9.233,
+      "throughput_tpm": 68.3,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 7.9,
+      "observaciones": "Contenci\u00f3n moderada en cola de tareas. CPU del contenedor en 100%"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 3,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 16.022,
+      "p95_latencia_s": 30.843,
+      "throughput_tpm": 92.7,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 31.72,
+      "observaciones": "Alta contenci\u00f3n en socket de Docker (/var/run/docker.sock) y scheduler SO"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 5,
+      "v3_concurrencia": 1,
+      "total_pedidos": 1,
+      "pedidos_exitosos": 1,
+      "pedidos_bot_totales": 0,
+      "pedidos_bot_rechazados": 0,
+      "distribucion_codigos": {
+        "200": 1
+      },
+      "p50_latencia_s": 1.981,
+      "p95_latencia_s": 1.981,
+      "throughput_tpm": 30.3,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 1.98,
+      "observaciones": "Sin contenci\u00f3n. Latencia dominada por tiempo de ciclo Docker + ejecuci\u00f3n"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 5,
+      "v3_concurrencia": 10,
+      "total_pedidos": 10,
+      "pedidos_exitosos": 9,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 9
+      },
+      "p50_latencia_s": 4.373,
+      "p95_latencia_s": 6.114,
+      "throughput_tpm": 94.5,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 5.72,
+      "observaciones": "Contenci\u00f3n moderada en cola de tareas. CPU del contenedor en 100%"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 5,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 49,
+      "pedidos_bot_totales": 1,
+      "pedidos_bot_rechazados": 1,
+      "distribucion_codigos": {
+        "401": 1,
+        "200": 49
+      },
+      "p50_latencia_s": 13.033,
+      "p95_latencia_s": 26.504,
+      "throughput_tpm": 108.2,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 27.17,
+      "observaciones": "Saturaci\u00f3n severa: contenci\u00f3n en Docker socket + cola profunda (46 encoladas)"
+    }
+  ]
+}

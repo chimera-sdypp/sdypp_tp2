@@ -101,6 +101,13 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
 
     @app.post("/getRemoteTask")
     async def getRemoteTask(request: Request):  # noqa: N802 (nombre del enunciado)
+        if config.api_token:
+            auth_header = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+            api_header = request.headers.get("x-api-token") or request.headers.get("X-API-Token") or ""
+            esperado = f"Bearer {config.api_token}"
+            if auth_header != esperado and api_header != config.api_token:
+                raise ErrorApi(TipoError.NO_AUTORIZADO, "token de autenticación faltante o inválido")
+
         cuerpo = await request.body()
         if len(cuerpo) > config.max_cuerpo:
             raise ErrorApi(TipoError.CUERPO_DEMASIADO_GRANDE,
