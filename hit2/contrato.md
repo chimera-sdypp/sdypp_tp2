@@ -85,6 +85,10 @@ Cabeceras obligatorias:
 `cerberusdistribuido/tarea` ≡ `docker.io/cerberusdistribuido/tarea`. Si la variable está vacía no
 se permite **ninguna** imagen.
 
+Una entrada puede fijar el contenido: `repo@sha256:<digest>` (repetible). De ese repositorio sólo
+corren esos digests; otro es `403`. Orden: bien formada (`422`), en la lista (`403`), existente
+(`422 IMAGEN_INEXISTENTE`), digest (`403`).
+
 ---
 
 ## 5. Lo que el servidor espera del servicio tarea

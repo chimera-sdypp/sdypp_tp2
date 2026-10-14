@@ -99,7 +99,10 @@ def crear_app(config=None, lanzador=None, nodo=None):
         return responder_error(ErrorApi(TipoError.RUTA_INEXISTENTE, f"no existe la ruta {request.url.path}"))
 
     async def _solicitud(request):
-        """El cuerpo de una tarea, validado y con la imagen en la lista blanca."""
+        """El cuerpo de una tarea, validado, y la imagen ya comprobada: bien formada (eso
+        lo ve `validar_solicitud`), en la lista blanca, existente y, si la lista le fija
+        digests a ese repositorio, con uno de ellos. Se hace antes de pedir asignación:
+        una imagen inválida no llega al coordinador ni ocupa a otro nodo."""
         cuerpo = await request.body()
         if len(cuerpo) > config.max_cuerpo:
             raise ErrorApi(TipoError.CUERPO_DEMASIADO_GRANDE,
@@ -109,6 +112,12 @@ def crear_app(config=None, lanzador=None, nodo=None):
         if imagen.nombre not in permitidas:
             raise ErrorApi(TipoError.IMAGEN_NO_PERMITIDA,
                            f"la imagen {imagen.nombre} no está en la lista de imágenes permitidas")
+        digests = await run_in_threadpool(lanzador.preparar_imagen, imagen)
+        fijados = permitidas[imagen.nombre]
+        if fijados and not fijados & digests:
+            raise ErrorApi(TipoError.IMAGEN_NO_PERMITIDA,
+                           f"la imagen {imagen.referencia} no coincide con ningún digest permitido",
+                           interno=f"digests de la imagen: {sorted(digests) or 'ninguno'}")
         return solicitud, imagen
 
     @app.post("/getRemoteTask")

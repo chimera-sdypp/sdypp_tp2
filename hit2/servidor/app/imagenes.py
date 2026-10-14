@@ -2,7 +2,8 @@
 
 El cliente elige qué imagen corre el servidor, y el servidor la corre con acceso
 al daemon de Docker: sin una lista blanca, cualquiera ejecutaría lo que quisiera
-en el host. Sólo pasan los repositorios configurados; sin configurar, ninguno.
+en el host. Sólo pasan los repositorios configurados (y, si la lista fija un
+digest, sólo ese contenido); sin configurar, ninguno.
 
 Los nombres se normalizan como lo hace Docker (`cerberusdistribuido/tarea` →
 `docker.io/cerberusdistribuido/tarea`), para que la lista y Docker hablen de lo mismo.
@@ -98,6 +99,19 @@ def parsear(texto):
     return Imagen(registry, repositorio, tag, digest or None)
 
 
-def lista_blanca(repositorios):
-    """Nombres normalizados de los repositorios permitidos."""
-    return {"/".join(_normalizar_nombre(r)) for r in repositorios}
+def lista_blanca(entradas):
+    """`repo` o `repo@sha256:…` → {nombre normalizado: digests fijados}.
+
+    Un repositorio sin digest acepta cualquier versión fija. Con uno o más
+    digests, sólo esos contenidos: si alguien vuelve a subir el mismo tag con
+    otro código, el servidor no lo ejecuta.
+    """
+    permitidas = {}
+    for entrada in entradas:
+        nombre, arroba, digest = entrada.partition("@")
+        if arroba and not _DIGEST.match(digest):
+            raise ImagenInvalida(f"{entrada}: el digest tiene que ser sha256:<64 hex>")
+        fijados = permitidas.setdefault("/".join(_normalizar_nombre(nombre)), set())
+        if digest:
+            fijados.add(digest)
+    return permitidas

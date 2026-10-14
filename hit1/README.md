@@ -44,6 +44,10 @@ curl -s -X POST localhost:8080/getRemoteTask \
   -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0.0"}'
 ```
 
+## Demo
+
+[![Demo del Hit #1](https://img.youtube.com/vi/aX1pN7a9EjA/maxresdefault.jpg)](https://youtu.be/aX1pN7a9EjA)
+
 ### Publicar el servicio tarea en Docker Hub
 
 La imagen está en un repositorio **privado** de Docker Hub (`cerberusdistribuido/tarea`).
@@ -133,20 +137,54 @@ quien hace el pull, y el cliente no interviene. Los *image pull secrets* y *Work
 OIDC* propiamente dichos son de Kubernetes y de la nube (TP3); los **tokens de corta duración** no
 tienen un flujo directo en Docker Hub.
 
-Probado con la imagen privada: con el token, el servidor la baja y la tarea responde; sin el token,
-Docker Hub la niega y el cliente recibe `422 IMAGEN_INEXISTENTE`.
+**Evidencia (R1)**, con [`evidencias/r1_pull_privado.sh`](../evidencias/r1_pull_privado.sh):
+
+```console
+$ docker pull cerberusdistribuido/tarea:1.0.0                  # sin credencial
+Error response from daemon: pull access denied for cerberusdistribuido/tarea, repository does not exist or may require 'docker login'
+$ docker login -u cerberusdistribuido --password-stdin         # token de sólo lectura
+Login Succeeded
+$ docker pull cerberusdistribuido/tarea:1.0.0
+docker.io/cerberusdistribuido/tarea:1.0.0
+
+# El mismo pull, hecho por el servidor (imagen borrada del host). Sin token:
+$ curl -s -X POST localhost:18090/getRemoteTask -H 'Content-Type: application/json' -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0.0"}'
+{"codigo":422,"contenido":{"error":{"tipo":"IMAGEN_INEXISTENTE","mensaje":"la imagen docker.io/cerberusdistribuido/tarea:1.0.0 no existe o no es accesible","detalles":[]}}}
+INFO | descargando docker.io/cerberusdistribuido/tarea:1.0.0 (autenticado: no)
+# Con el token en el secreto del servidor, el mismo curl:
+{"codigo":200,"contenido":{"calculo":"suma","resultado":7}}
+INFO | descargando docker.io/cerberusdistribuido/tarea:1.0.0 (autenticado: sí)
+```
 
 > ⚠️ **"Hacer `docker login` en el host" no alcanza** si el servidor corre en un contenedor: las
 > credenciales de un pull las manda el **cliente** de Docker (acá, el SDK adentro del servidor) y el
 > daemon no guarda ninguna. Un `docker login` en el host las deja en `~/.docker/config.json` del
 > host, donde el servidor no las ve. Por eso el token le llega como secreto.
 
-### Lista blanca de imágenes
+### Validación de la imagen (R2)
 
 El cliente elige la imagen y el servidor la corre con acceso al socket de Docker, que **equivale a
-root en el host**. Sin control, cualquiera que llegue a `/getRemoteTask` ejecutaría lo que quisiera.
-Por eso sólo se aceptan los repositorios de `TP2_IMAGENES_PERMITIDAS` (vacía = ninguno), y siempre
-con una versión fija (tag o digest; `latest` no).
+root en el host**. Antes de crear el contenedor, la revisa en orden: bien formada y con versión fija,
+sin `latest` (`422`); en `TP2_IMAGENES_PERMITIDAS` (`403`); existente en el host o en el registry
+(`422`); y, si la lista le fija un digest (`repo@sha256:…`), con ese contenido (`403`). Si el
+contenedor termina sin levantar el servicio, contesta `502` en el momento, sin esperar el timeout.
+
+**Evidencia (R2)**, con [`evidencias/r2_imagenes.sh`](../evidencias/r2_imagenes.sh) (lista blanca:
+la tarea fijada a su digest y una imagen que no es servicio tarea). No quedó ningún contenedor:
+
+| Caso | `imagen` | HTTP | `tipo` | Mensaje |
+|---|---|---|---|---|
+| Válida, por tag | `cerberusdistribuido/tarea:1.0.0` | 200 | `—` | resultado 7 |
+| Válida, por digest | `cerberusdistribuido/tarea@sha256:bbd39cd8e388…` | 200 | `—` | resultado 7 |
+| Mal formada: mayúsculas | `Cerberus/Tarea:1.0.0` | 422 | `PAYLOAD_INVALIDO` | el payload no es válido: componente inválido 'Cerberus': sólo minúsculas, dígitos y . _ - |
+| Mal formada: sin versión | `cerberusdistribuido/tarea` | 422 | `PAYLOAD_INVALIDO` | el payload no es válido: falta el tag o el digest (no se acepta latest implícito) |
+| Mal formada: `latest` | `cerberusdistribuido/tarea:latest` | 422 | `PAYLOAD_INVALIDO` | el payload no es válido: no se acepta el tag latest: usar una versión fija o un digest |
+| Mal formada: otro comando | `cerberusdistribuido/tarea:1.0.0; rm -rf /` | 422 | `PAYLOAD_INVALIDO` | el payload no es válido: componente inválido 'tarea:1.0.0; rm -rf ': sólo minúsculas, dígitos y . _ - |
+| No permitida | `alpine:3.20` | 403 | `IMAGEN_NO_PERMITIDA` | la imagen docker.io/library/alpine no está en la lista de imágenes permitidas |
+| Inexistente: tag | `cerberusdistribuido/tarea:9.9.9` | 422 | `IMAGEN_INEXISTENTE` | la imagen docker.io/cerberusdistribuido/tarea:9.9.9 no existe o no es accesible |
+| Inexistente: digest | `cerberusdistribuido/tarea@sha256:000000000000…` | 422 | `IMAGEN_INEXISTENTE` | la imagen docker.io/cerberusdistribuido/tarea@sha256:000000000000… no existe o no es accesible |
+| Otro contenido que el digest fijado | `cerberusdistribuido/tarea:otra` | 403 | `IMAGEN_NO_PERMITIDA` | la imagen docker.io/cerberusdistribuido/tarea:otra no coincide con ningún digest permitido |
+| No es un servicio tarea | `cerberusdistribuido/no-es-tarea:1.0` | 502 | `TAREA_FALLIDA` | el contenedor terminó antes de quedar listo: la imagen no es un servicio tarea (HTTP en el puerto 8080) |
 
 ### API
 

@@ -19,11 +19,18 @@ VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "datos": {}, "image
 
 
 class LanzadorFalso:
-    def __init__(self, resultado=7, error=None, disponible=True):
+    def __init__(self, resultado=7, error=None, disponible=True, digests=(), error_imagen=None):
         self.resultado = resultado
         self.error = error
         self._disponible = disponible
+        self.digests = set(digests)
+        self.error_imagen = error_imagen
         self.llamadas = []
+
+    def preparar_imagen(self, imagen):
+        if self.error_imagen:
+            raise self.error_imagen
+        return self.digests
 
     def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802
         self.llamadas.append((imagen.referencia, calculo, parametros, datos))
@@ -137,6 +144,35 @@ def test_imagen_fuera_de_la_lista_blanca_es_403(armar):
 def test_sin_lista_blanca_se_rechaza_todo(armar):
     cliente, _ = armar(imagenes_permitidas=())
     _sobre(_post(cliente, VALIDO), 403, "IMAGEN_NO_PERMITIDA")
+
+
+def test_imagen_inexistente_es_422_y_no_se_ejecuta(armar):
+    error = ErrorApi(TipoError.IMAGEN_INEXISTENTE, "la imagen no existe o no es accesible",
+                     interno="manifest unknown")
+    cliente, lanzador = armar(LanzadorFalso(error_imagen=error))
+    respuesta = _post(cliente, {**VALIDO, "imagen": "cerberusdistribuido/tarea:9.9.9"})
+    _sobre(respuesta, 422, "IMAGEN_INEXISTENTE")
+    assert "manifest unknown" not in respuesta.text
+    assert lanzador.llamadas == []
+
+
+DIGEST = "sha256:" + "a" * 64
+
+
+def test_imagen_con_el_digest_fijado_se_ejecuta(armar):
+    cliente, lanzador = armar(LanzadorFalso(digests={DIGEST}),
+                              imagenes_permitidas=(f"cerberusdistribuido/tarea@{DIGEST}",))
+    _sobre(_post(cliente, VALIDO), 200)
+    assert len(lanzador.llamadas) == 1
+
+
+@pytest.mark.parametrize("digests", [{"sha256:" + "f" * 64}, set()])
+def test_imagen_con_otro_digest_que_el_fijado_es_403(armar, digests):
+    cliente, lanzador = armar(LanzadorFalso(digests=digests),
+                              imagenes_permitidas=(f"cerberusdistribuido/tarea@{DIGEST}",))
+    contenido = _sobre(_post(cliente, VALIDO), 403, "IMAGEN_NO_PERMITIDA")
+    assert "digest" in contenido["error"]["mensaje"]
+    assert lanzador.llamadas == []
 
 
 # ---------------------------------------------------------------- errores de la tarea

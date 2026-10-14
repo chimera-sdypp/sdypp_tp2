@@ -11,6 +11,7 @@ from app.lanzador import Lanzador, SinConexion, Vencido, http_json
 from dobles import DockerFalso, HttpFalso, RelojFalso, logger_silencioso, sobre
 
 IMAGEN = parsear("cerberusdistribuido/tarea:1.0")
+DIGEST = "sha256:" + "b" * 64
 CONFIG = Config(timeout_arranque=5, timeout_ejecucion=10)
 
 
@@ -65,6 +66,13 @@ def test_descarga_la_imagen_si_falta_con_credenciales_del_servidor():
                                    "auth": {"username": "cerberus", "password": "dckr_pat_x"}}]
 
 
+def test_sin_token_no_manda_credenciales():
+    docker_falso = DockerFalso()
+    lanzador, _ = _lanzador(docker_falso, config=Config(registry_usuario="cerberus", registry_token=""))
+    _ejecutar(lanzador)
+    assert docker_falso.pulls[0]["auth"] is None
+
+
 def test_no_manda_el_token_a_otro_registry():
     docker_falso = DockerFalso()
     lanzador, _ = _lanzador(docker_falso, config=Config(registry_usuario="cerberus",
@@ -82,6 +90,36 @@ def test_errores_de_descarga(error, tipo):
     lanzador, _ = _lanzador(docker_falso)
     assert _falla(lanzador).tipo is tipo
     assert docker_falso.creados == []
+
+
+# ---------------------------------------------------------------- preparar_imagen (R2)
+def test_preparar_imagen_presente_devuelve_sus_digests_sin_descargar():
+    docker_falso = DockerFalso(presentes={IMAGEN.referencia}, digests=[DIGEST])
+    lanzador, _ = _lanzador(docker_falso)
+    assert lanzador.preparar_imagen(IMAGEN) == {DIGEST}
+    assert docker_falso.pulls == []
+
+
+def test_preparar_imagen_ausente_la_descarga():
+    docker_falso = DockerFalso(digests=[DIGEST])
+    lanzador, _ = _lanzador(docker_falso)
+    assert lanzador.preparar_imagen(IMAGEN) == {DIGEST}
+    assert len(docker_falso.pulls) == 1
+
+
+def test_preparar_imagen_inexistente_no_crea_contenedores():
+    docker_falso = DockerFalso(error_pull=NotFound("manifest unknown"))
+    lanzador, _ = _lanzador(docker_falso)
+    with pytest.raises(ErrorApi) as info:
+        lanzador.preparar_imagen(IMAGEN)
+    assert info.value.tipo is TipoError.IMAGEN_INEXISTENTE
+    assert docker_falso.creados == []
+
+
+def test_imagen_construida_en_el_host_no_tiene_digests():
+    docker_falso = DockerFalso(presentes={IMAGEN.referencia})
+    lanzador, _ = _lanzador(docker_falso)
+    assert lanzador.preparar_imagen(IMAGEN) == set()
 
 
 # ---------------------------------------------------------------- fallas de la tarea
@@ -108,6 +146,19 @@ def test_tarea_que_nunca_queda_lista_vence_y_se_borra():
     error = _falla(lanzador)
     assert error.tipo is TipoError.TAREA_SIN_RESPUESTA
     assert "5 s" in error.mensaje
+    assert docker_falso.creados[0].borrado
+
+
+def test_imagen_que_no_es_un_servicio_tarea_falla_sin_esperar_el_timeout():
+    """Si el contenedor termina, no se espera el timeout de arranque ni queda colgado."""
+    docker_falso = DockerFalso(presentes={IMAGEN.referencia}, termina=True)
+    http = HttpFalso(salud=SinConexion("refused"))
+    lanzador, _ = _lanzador(docker_falso, http=http)
+    error = _falla(lanzador)
+    assert error.tipo is TipoError.TAREA_FALLIDA
+    assert "no es un servicio tarea" in error.mensaje
+    assert "código de salida 3" in error.interno
+    assert http.pedidos == []
     assert docker_falso.creados[0].borrado
 
 

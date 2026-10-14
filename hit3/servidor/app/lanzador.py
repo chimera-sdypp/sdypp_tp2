@@ -90,6 +90,13 @@ class Lanzador:
         except (ErrorApi, *_SIN_DOCKER):
             return False
 
+    def preparar_imagen(self, imagen):
+        """Comprueba que la imagen existe antes de ejecutarla: si no está en el host, la
+        baja del registry con las credenciales del servidor (`422` si no existe).
+        Devuelve sus digests (`sha256:…`), para compararlos con los de la lista blanca."""
+        local = self._asegurar_imagen(self._docker(), imagen)
+        return {d.partition("@")[2] for d in local.attrs.get("RepoDigests") or []}
+
     def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802 (nombre del enunciado)
         cliente = self._docker()
         self._asegurar_imagen(cliente, imagen)
@@ -100,8 +107,7 @@ class Lanzador:
             contenedor = cliente.containers.create(imagen.referencia, network=self._config.red_tareas,
                                                    labels={ETIQUETA_NODO: str(self._config.nodo_id)})
             contenedor.start()
-            base = f"http://{self._ip(contenedor)}:{self._config.tarea_puerto}"
-            self._esperar_listo(base)
+            base = self._esperar_listo(contenedor)
             return self._enviar(base, calculo, parametros, datos)
         except APIError as error:
             raise ErrorApi(TipoError.TAREA_FALLIDA, "no se pudo levantar el contenedor de la tarea",
@@ -134,21 +140,21 @@ class Lanzador:
         """Descarga la imagen si no está en el host, con las credenciales del
         servidor (nunca del cliente), y sólo si la imagen es de su registry."""
         try:
-            cliente.images.get(imagen.referencia)
-            return
+            return cliente.images.get(imagen.referencia)
         except NotFound:
             pass
         except _SIN_DOCKER as error:
             raise _sin_docker(error) from None
 
         credenciales = None
-        if self._config.registry_usuario and imagen.registry == self._config.registry:
+        if (self._config.registry_usuario and self._config.registry_token
+                and imagen.registry == self._config.registry):
             credenciales = {"username": self._config.registry_usuario,
                             "password": self._config.registry_token}
         self._log.info("descargando %s (autenticado: %s)", imagen.referencia,
                        "sí" if credenciales else "no")
         try:
-            cliente.images.pull(imagen.nombre, tag=imagen.version, auth_config=credenciales)
+            return cliente.images.pull(imagen.nombre, tag=imagen.version, auth_config=credenciales)
         except NotFound as error:
             raise ErrorApi(TipoError.IMAGEN_INEXISTENTE,
                            f"la imagen {imagen.referencia} no existe o no es accesible",
@@ -163,17 +169,25 @@ class Lanzador:
         """IP en la red de tareas. La IP y no el nombre: el nombre sólo resuelve
         desde adentro de la red de Docker, y así el servidor anda también suelto
         en el host (desarrollo en Linux)."""
-        contenedor.reload()
         return contenedor.attrs["NetworkSettings"]["Networks"][self._config.red_tareas]["IPAddress"]
 
-    def _esperar_listo(self, base):
-        """En vez de un sleep fijo: consulta el /health de la tarea hasta que conteste."""
+    def _esperar_listo(self, contenedor):
+        """En vez de un sleep fijo: consulta el /health de la tarea hasta que conteste
+        → URL base de la tarea. Si el contenedor termina antes, la imagen no es un
+        servicio tarea: falla en el momento, sin esperar el timeout."""
         limite = self._reloj() + self._config.timeout_arranque
         while self._reloj() < limite:
+            contenedor.reload()
+            if contenedor.status in ("exited", "dead"):
+                raise ErrorApi(TipoError.TAREA_FALLIDA,
+                               "el contenedor terminó antes de quedar listo: la imagen no es un "
+                               f"servicio tarea (HTTP en el puerto {self._config.tarea_puerto})",
+                               interno=f"código de salida {contenedor.attrs['State']['ExitCode']}")
+            base = f"http://{self._ip(contenedor)}:{self._config.tarea_puerto}"
             try:
                 estado, _ = self._http("GET", base + "/health", timeout=1.0)
                 if estado == 200:
-                    return
+                    return base
             except (SinConexion, Vencido):
                 pass
             self._dormir(0.2)

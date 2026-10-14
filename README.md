@@ -31,6 +31,8 @@ validación, el contrato con el servicio tarea y, en el Hit 3, los mensajes entr
 | `despliegue/` | El script que instala el hit en la VM |
 | `mediciones/` | (Hits 2 y 3) Los datos y gráficos del informe |
 
+Los scripts de evidencia de R1 y R2 están en [`evidencias/`](evidencias/) (p. ej. `evidencias/r2_imagenes.sh hit2`).
+
 ## Correrlo en local
 
 Hace falta Docker con Compose v2 y Python 3 para el cliente. Para cualquier hit:
@@ -47,6 +49,10 @@ Cada push corre en GitHub Actions `gitleaks` (falla si hay un secreto en el cód
 unitarios y de integración de los tres hits. En `main`, además, publica la imagen de cada servidor en
 GHCR. La VM baja la imagen nueva en hasta 5 minutos, sin credenciales en GitHub, y un último
 job prueba el servidor desplegado desde Internet.
+
+## Informe del Trabajo Práctico
+
+El informe del trabajo práctico puede verse desde [aquí](/informe-tp2-cerberus.pdf).
 
 ## Contrato público y Swagger
 

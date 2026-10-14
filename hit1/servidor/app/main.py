@@ -59,6 +59,22 @@ def crear_app(config=None, lanzador=None):
                 f"{request.method} no está permitido en {request.url.path}", cabeceras=error.headers))
         return responder_error(ErrorApi(TipoError.RUTA_INEXISTENTE, f"no existe la ruta {request.url.path}"))
 
+    async def _validar_imagen(texto):
+        """La imagen que pidió el cliente, antes de ejecutarla: bien formada (eso ya lo
+        vio `validar_solicitud`), en la lista blanca, existente y, si la lista le fija
+        digests a ese repositorio, con uno de ellos."""
+        imagen = imagenes.parsear(texto)  # ya validada: no falla
+        if imagen.nombre not in permitidas:
+            raise ErrorApi(TipoError.IMAGEN_NO_PERMITIDA,
+                           f"la imagen {imagen.nombre} no está en la lista de imágenes permitidas")
+        digests = await run_in_threadpool(lanzador.preparar_imagen, imagen)
+        fijados = permitidas[imagen.nombre]
+        if fijados and not fijados & digests:
+            raise ErrorApi(TipoError.IMAGEN_NO_PERMITIDA,
+                           f"la imagen {imagen.referencia} no coincide con ningún digest permitido",
+                           interno=f"digests de la imagen: {sorted(digests) or 'ninguno'}")
+        return imagen
+
     @app.post("/getRemoteTask")
     async def getRemoteTask(request: Request):  # noqa: N802 (nombre del enunciado)
         cuerpo = await request.body()
@@ -66,10 +82,7 @@ def crear_app(config=None, lanzador=None):
             raise ErrorApi(TipoError.CUERPO_DEMASIADO_GRANDE,
                            f"el cuerpo supera los {config.max_cuerpo} bytes")
         solicitud = validar_solicitud(cuerpo, request.headers.get("content-type"))
-        imagen = imagenes.parsear(solicitud.imagen)  # ya validada: no falla
-        if imagen.nombre not in permitidas:
-            raise ErrorApi(TipoError.IMAGEN_NO_PERMITIDA,
-                           f"la imagen {imagen.nombre} no está en la lista de imágenes permitidas")
+        imagen = await _validar_imagen(solicitud.imagen)
 
         log.info("tarea | %s | calculo=%s", imagen.referencia, solicitud.calculo)
         # En un hilo: el servidor sigue atendiendo pedidos mientras corre la tarea.

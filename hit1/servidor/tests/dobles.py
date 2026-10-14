@@ -17,12 +17,15 @@ class RelojFalso:
 
 
 class ContenedorFalso:
-    def __init__(self, imagen, network, falla_start=False):
+    def __init__(self, imagen, network, falla_start=False, termina=False):
         self.id = "abc123"
         self.imagen = imagen
         self.network = network
         self.falla_start = falla_start
-        self.attrs = {"NetworkSettings": {"Networks": {network: {"IPAddress": "172.30.0.5"}}}}
+        # termina: la imagen no es un servicio tarea y el proceso sale enseguida.
+        self.status = "exited" if termina else "running"
+        self.attrs = {"NetworkSettings": {"Networks": {network: {"IPAddress": "172.30.0.5"}}},
+                      "State": {"ExitCode": 3 if termina else 0}}
         self.borrado = False
 
     def start(self):
@@ -36,13 +39,20 @@ class ContenedorFalso:
         self.borrado = True
 
 
+class ImagenFalsa:
+    def __init__(self, digests):
+        self.attrs = {"RepoDigests": [f"cerberusdistribuido/tarea@{d}" for d in digests]}
+
+
 class DockerFalso:
     """Hace de `docker.DockerClient`: images.get/pull, containers.create y ping."""
 
-    def __init__(self, presentes=(), error_pull=None, falla_start=False):
+    def __init__(self, presentes=(), error_pull=None, falla_start=False, termina=False, digests=()):
         self.presentes = set(presentes)
         self.error_pull = error_pull
         self.falla_start = falla_start
+        self.termina = termina
+        self.digests = digests
         self.pulls = []
         self.creados = []
         self.images = self
@@ -54,14 +64,16 @@ class DockerFalso:
     def get(self, referencia):
         if referencia not in self.presentes:
             raise ImageNotFound(f"No such image: {referencia}")
+        return ImagenFalsa(self.digests)
 
     def pull(self, nombre, tag=None, auth_config=None):
         self.pulls.append({"nombre": nombre, "tag": tag, "auth": auth_config})
         if self.error_pull:
             raise self.error_pull
+        return ImagenFalsa(self.digests)
 
     def create(self, imagen, network=None):
-        contenedor = ContenedorFalso(imagen, network, self.falla_start)
+        contenedor = ContenedorFalso(imagen, network, self.falla_start, self.termina)
         self.creados.append(contenedor)
         return contenedor
 

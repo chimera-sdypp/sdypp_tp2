@@ -6,6 +6,12 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
 
 ---
 
+## Demo
+
+[![Demo del Hit #2](https://img.youtube.com/vi/cYUaQ5mu_gc/maxresdefault.jpg)](https://youtu.be/cYUaQ5mu_gc)
+
+---
+
 ## 1. Arquitectura y Componentes del Hit #2
 
 ```
@@ -227,9 +233,23 @@ La sección crítica es corta: operaciones sobre la heap y el contador. El conte
 
 La validación del payload, el sobre de las respuestas, la lista blanca de imágenes, las credenciales del registry y el ciclo de vida del contenedor tarea no cambian: ver las decisiones del [Hit 1](../hit1/README.md#decisiones-de-diseño).
 
+## 7. Imagen privada y validación (R1 y R2)
+
+Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo código); acá la imagen se valida antes de encolar la tarea.
+`evidencias/r1_pull_privado.sh hit2` y `evidencias/r2_imagenes.sh hit2` dan:
+
+| Caso | HTTP | `tipo` |
+|---|---|---|
+| R1: pull por el servidor sin token / con token | 422 / 200 | `IMAGEN_INEXISTENTE` / — |
+| Válida, por tag o por digest | 200 | — |
+| Mal formada (mayúsculas, sin versión, `latest`, otro comando) | 422 | `PAYLOAD_INVALIDO` |
+| No permitida, u otro contenido que el digest fijado | 403 | `IMAGEN_NO_PERMITIDA` |
+| Inexistente (tag o digest) | 422 | `IMAGEN_INEXISTENTE` |
+| No es un servicio tarea | 502 | `TAREA_FALLIDA` |
+
 ---
 
-## 7. Despliegue
+## 8. Despliegue
 
 Público en **http://18.231.127.74:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
 

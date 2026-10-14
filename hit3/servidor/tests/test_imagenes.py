@@ -45,3 +45,17 @@ def test_lista_blanca_normaliza_los_nombres():
     assert parsear("docker.io/cerberusdistribuido/tarea:1.0").nombre in permitidas
     assert parsear("python:3.14").nombre in permitidas
     assert parsear("cerberusdistribuido/otra:1.0").nombre not in permitidas
+
+
+def test_lista_blanca_con_digests_fijados():
+    otro = "sha256:" + "b" * 64
+    permitidas = lista_blanca([f"cerberusdistribuido/tarea@{DIGEST}", f"cerberusdistribuido/tarea@{otro}",
+                               "python"])
+    assert permitidas == {"docker.io/cerberusdistribuido/tarea": {DIGEST, otro},
+                          "docker.io/library/python": set()}
+
+
+@pytest.mark.parametrize("entrada", ["cerberusdistribuido/tarea@sha256:corto", "Cerberus/Tarea"])
+def test_lista_blanca_mal_configurada_falla_al_arrancar(entrada):
+    with pytest.raises(ImagenInvalida):
+        lista_blanca([entrada])

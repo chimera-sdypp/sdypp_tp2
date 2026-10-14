@@ -70,12 +70,12 @@ Respuestas:
 |---|---|---|
 | `200` | La tarea terminó | `{calculo, resultado, nodo}`: `nodo` es el ID del nodo que la ejecutó |
 | `400` | Cuerpo vacío, JSON mal formado, claves duplicadas, `NaN`, demasiado anidado | `CUERPO_VACIO`, `JSON_INVALIDO` |
-| `403` | La imagen no está en la lista blanca | `IMAGEN_NO_PERMITIDA` |
+| `403` | La imagen no está en la lista blanca, o no coincide con el digest que la lista fija | `IMAGEN_NO_PERMITIDA` |
 | `413` | Cuerpo de más de 64 KiB | `CUERPO_DEMASIADO_GRANDE` |
 | `415` | `Content-Type` distinto de `application/json` | `TIPO_DE_CONTENIDO` |
 | `422` | Falla la validación; la imagen no existe; la tarea rechazó los parámetros | `PAYLOAD_INVALIDO`, `IMAGEN_INEXISTENTE`, `TAREA_RECHAZADA` |
 | `500` | Error inesperado del servidor | `ERROR_INTERNO` |
-| `502` | La tarea falló o contestó algo inválido; el registry no respondió; se cayó el nodo que atendía el pedido (lo contesta nginx) | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE`, `NODO_NO_DISPONIBLE` |
+| `502` | La tarea falló o contestó algo inválido; la imagen no es un servicio tarea; el registry no respondió; se cayó el nodo que atendía el pedido (lo contesta nginx) | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE`, `NODO_NO_DISPONIBLE` |
 | `503` | Docker no responde; no hay coordinador ni nodos vivos a tiempo (`TP2_TIMEOUT_ASIGNACION`) | `SERVICIO_NO_DISPONIBLE`, `CLUSTER_NO_DISPONIBLE` |
 | `504` | El contenedor no quedó listo o no contestó a tiempo | `TAREA_SIN_RESPUESTA` |
 
@@ -108,6 +108,10 @@ coordinador.
 (`cerberusdistribuido/tarea`). Los nombres se normalizan antes de comparar:
 `cerberusdistribuido/tarea` ≡ `docker.io/cerberusdistribuido/tarea`. Si la variable está vacía no
 se permite **ninguna** imagen.
+
+Una entrada puede fijar el contenido: `repo@sha256:<digest>` (repetible). De ese repositorio sólo
+corren esos digests; otro es `403`. Orden: bien formada (`422`), en la lista (`403`), existente
+(`422 IMAGEN_INEXISTENTE`), digest (`403`).
 
 ## 4. Tipos de error
 

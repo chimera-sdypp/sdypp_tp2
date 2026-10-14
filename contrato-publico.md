@@ -42,13 +42,13 @@ rechazan y la respuesta dice qué falló. El cuerpo puede tener hasta 64 KiB.
 | Código | `tipo` | Cuándo |
 |---|---|---|
 | 400 | `CUERPO_VACIO`, `JSON_INVALIDO` | No hay cuerpo, o el JSON está mal formado, tiene claves duplicadas o `NaN` |
-| 403 | `IMAGEN_NO_PERMITIDA` | La imagen no está en la lista blanca |
+| 403 | `IMAGEN_NO_PERMITIDA` | La imagen no está en la lista blanca, o no coincide con el digest que la lista fija |
 | 404 / 405 | `RUTA_INEXISTENTE`, `METODO_NO_PERMITIDO` | La ruta no existe, o no acepta ese método |
 | 413 | `CUERPO_DEMASIADO_GRANDE` | Más de 64 KiB |
 | 415 | `TIPO_DE_CONTENIDO` | Falta `Content-Type: application/json` |
 | 422 | `PAYLOAD_INVALIDO`, `IMAGEN_INEXISTENTE`, `TAREA_RECHAZADA` | El pedido no es válido (`detalles` dice qué campo), la imagen no existe, o la tarea rechazó los parámetros (p. ej. división por cero) |
 | 500 | `ERROR_INTERNO` | Error inesperado del servidor |
-| 502 | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE` | La tarea falló o no se pudo bajar la imagen |
+| 502 | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE` | La tarea falló, la imagen no es un servicio tarea o no se pudo bajar la imagen |
 | 503 | `SERVICIO_NO_DISPONIBLE` | Docker no responde |
 | 504 | `TAREA_SIN_RESPUESTA` | La tarea no arrancó en 30 s o no contestó en 60 s |
 
