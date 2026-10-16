@@ -26,6 +26,10 @@ class Config:
     registry: str = "docker.io"
     registry_usuario: str = ""
     registry_token: str = ""
+    # Secreto con que se firman los JWT (R4). Sin él, el servidor no arranca.
+    jwt_secreto: str = ""
+    # Pedidos por minuto y por usuario (R4); 0 = sin límite.
+    limite_pedidos_min: int = 300
 
     @classmethod
     def desde_entorno(cls, entorno=None):
@@ -40,4 +44,6 @@ class Config:
             dir_logs=e.get("TP2_DIR_LOGS") or cls.dir_logs,
             registry_usuario=e.get("TP2_REGISTRY_USUARIO", ""),
             registry_token=_leer_secreto(e.get("TP2_REGISTRY_TOKEN_ARCHIVO", "")),
+            jwt_secreto=_leer_secreto(e.get("TP2_JWT_SECRET_ARCHIVO", "")) or e.get("TP2_JWT_SECRET", "").strip(),
+            limite_pedidos_min=int(e.get("TP2_LIMITE_PEDIDOS_MIN") or cls.limite_pedidos_min),
         )

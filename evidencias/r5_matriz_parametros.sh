@@ -8,7 +8,7 @@
 #
 # Uso:
 #   evidencias/r5_matriz_parametros.sh [hit2]
-#   TP2_SERVIDOR="http://18.231.127.74:8082" evidencias/r5_matriz_parametros.sh
+#   TP2_SERVIDOR="http://18.231.127.74:8082" TP2_JWT_SECRET=... evidencias/r5_matriz_parametros.sh
 set -euo pipefail
 
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,11 +34,18 @@ leer() { grep -m1 "^$1=" "$ARCHIVO" 2>/dev/null | cut -d= -f2- || true; }
 USUARIO="$(leer TP2_REGISTRY_USUARIO)"
 REG_TOKEN="$(leer TP2_REGISTRY_TOKEN)"
 
-# Tokens de autenticación para clientes (R4/R5). Si no están en el entorno o .env,
-# se generan tokens dinámicos efímeros para simular múltiples usuarios.
-TOKENS="${TP2_API_TOKEN:-$(leer TP2_API_TOKEN)}"
-if [ -z "$TOKENS" ]; then
-    TOKENS="token_usr_1_$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n'),token_usr_2_$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n'),token_usr_3_$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+# Autenticación (R4): los usuarios de la prueba son tres JWT distintos, firmados con el secreto
+# del servidor. Contra un servidor local se genera un secreto efímero; contra uno remoto hace falta
+# su TP2_JWT_SECRET (o TP2_TOKENS con los JWT ya emitidos, separados por comas).
+if [ -z "${TP2_TOKENS:-}" ]; then
+    if [ -z "$SERVIDOR_REMOTO" ]; then
+        TP2_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+    fi
+    : "${TP2_JWT_SECRET:?con TP2_SERVIDOR hace falta TP2_JWT_SECRET o TP2_TOKENS}"
+    export TP2_JWT_SECRET
+    TOKENS="$(for u in ana beto carla; do python3 "$RAIZ/evidencias/emitir_token.py" --usuario "$u" --rol usuario --horas 4; done | paste -sd,)"
+else
+    TOKENS="$TP2_TOKENS"
 fi
 
 echo "======================================================================"
@@ -57,7 +64,8 @@ TP2_IMAGENES_PERMITIDAS=$PERMITIDAS
 TP2_PUERTO=$PUERTO
 TP2_WORKERS_MAX=4
 TP2_TIMEOUT_EJECUCION=$TIMEOUT_EJECUCION
-TP2_API_TOKEN=$TOKENS
+TP2_JWT_SECRET=$TP2_JWT_SECRET
+TP2_LIMITE_PEDIDOS_MIN=0
 TP2_REGISTRY_USUARIO=$USUARIO
 TP2_REGISTRY_TOKEN=$REG_TOKEN
 FIN

@@ -15,7 +15,6 @@ Evalúa de forma empírica y reproducible:
 import argparse
 import json
 import os
-import secrets
 import statistics
 import threading
 import time
@@ -684,7 +683,7 @@ def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], sal
         f"- Pedidos emitidos por bots: **{total_pedidos_bot}**, en todas las celdas.\n"
         f"- Rechazados con `401 NO_AUTORIZADO`: **{total_rechazos_bot}/{total_pedidos_bot} ({tasa_rechazo:.1f}%)**.\n"
         f"- Latencia media de esos rechazos, medida por el cliente (incluye la red): **{lat_media_bot:.2f} ms**.\n"
-        "- Los usuarios legítimos usan varios tokens distintos (los de `TP2_API_TOKEN`, separados por comas), no uno compartido.\n"
+        "- Los usuarios legítimos usan varios tokens distintos (tres JWT distintos de `evidencias/emitir_token.py`), no uno compartido.\n"
         "- La comprobación está en un `@app.middleware('http')` de FastAPI: un pedido sin token válido se rechaza antes de "
         "llegar a la cola y sin crear ningún contenedor.\n\n"
         "> [!NOTE]\n"
@@ -727,8 +726,8 @@ def main():
     parser.add_argument(
         "--tokens",
         "--token",
-        default=os.environ.get("TP2_API_TOKEN", ""),
-        help="Token o lista separada por comas de tokens de autenticación de clientes",
+        default=os.environ.get("TP2_TOKENS", ""),
+        help="JWT de usuarios (separados por comas), emitidos con evidencias/emitir_token.py",
     )
     parser.add_argument(
         "--timeout-ejecucion",
@@ -759,8 +758,7 @@ def main():
     if args.tokens and args.tokens.strip():
         lista_tokens = [t.strip() for t in args.tokens.split(",") if t.strip()]
     else:
-        # Generar tokens dinámicos efímeros si no se proporcionaron
-        lista_tokens = [f"token_usr_{i+1}_{secrets.token_hex(4)}" for i in range(5)]
+        parser.error("hacen falta JWT de usuario (--tokens o TP2_TOKENS); ver evidencias/emitir_token.py")
 
     print(f"=== Evaluador R5 Cerberus ===")
     print(f"Servidor: {servidor}")

@@ -1,6 +1,6 @@
 # Hit 3 — cluster de 3 nodos (el servidor del Hit 1 + elección Bully) detrás de nginx.
 #
-#   cp .env.example .env      # y completar DOCKER_GID y TP2_IMAGENES_PERMITIDAS
+#   cp .env.example .env      # y completar DOCKER_GID, TP2_IMAGENES_PERMITIDAS y TP2_JWT_SECRET
 #   docker compose up --build -d --wait
 #   curl -s localhost:8080/health
 #
@@ -19,6 +19,7 @@ x-nodo: &nodo
   image: ${TP2_IMAGEN:-cerberusdistribuido/tp2-servidor-hit3:dev}
   secrets:
     - registry_token
+    - jwt_secret
   volumes:
     # Para crear los contenedores tarea le habla al daemon del host por su socket.
     - /var/run/docker.sock:/var/run/docker.sock
@@ -35,6 +36,9 @@ x-entorno: &entorno
   TP2_REGISTRY_USUARIO: ${TP2_REGISTRY_USUARIO:-}
   # El token llega como archivo (secret) y no como variable: no aparece en `docker inspect`.
   TP2_REGISTRY_TOKEN_ARCHIVO: /run/secrets/registry_token
+  TP2_JWT_SECRET_ARCHIVO: /run/secrets/jwt_secret
+  # Pedidos por minuto y por usuario, contados en cada nodo (nginx reparte entre los tres).
+  TP2_LIMITE_PEDIDOS_MIN: ${TP2_LIMITE_PEDIDOS_MIN:-300}
   TP2_RED_TAREAS: tp2-hit3-tareas
   TP2_INTERVALO_HEARTBEAT: ${TP2_INTERVALO_HEARTBEAT:-1}
   TP2_VENCIMIENTO_NODO: ${TP2_VENCIMIENTO_NODO:-3}
@@ -96,6 +100,10 @@ volumes:
   logs: {}
 
 secrets:
+  # Con qué se firman los JWT de los clientes: el mismo en los tres nodos. Sin él (o de menos de 32
+  # caracteres) los nodos no arrancan: nunca queda abierto.
+  jwt_secret:
+    environment: TP2_JWT_SECRET
   # Vacía en .env ⇒ compose no crea el archivo y los nodos hacen pulls anónimos.
   registry_token:
     environment: TP2_REGISTRY_TOKEN

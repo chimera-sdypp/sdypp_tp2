@@ -28,3 +28,17 @@ def test_el_token_se_lee_de_un_archivo(tmp_path):
 def test_sin_archivo_de_token_queda_vacio(tmp_path):
     config = Config.desde_entorno({"TP2_REGISTRY_TOKEN_ARCHIVO": str(tmp_path / "no-existe")})
     assert config.registry_token == ""
+
+
+def test_el_secreto_jwt_se_lee_de_un_archivo_o_de_la_variable(tmp_path):
+    archivo = tmp_path / "jwt"
+    archivo.write_text("desde-el-archivo\n", encoding="utf-8")
+    assert Config.desde_entorno({"TP2_JWT_SECRET_ARCHIVO": str(archivo)}).jwt_secreto == "desde-el-archivo"
+    assert Config.desde_entorno({"TP2_JWT_SECRET": " de-la-variable "}).jwt_secreto == "de-la-variable"
+    assert Config.desde_entorno({}).jwt_secreto == ""   # vacío: el servidor no arranca (test_api)
+
+
+def test_el_limite_por_usuario_tiene_default_y_se_puede_apagar():
+    assert Config.desde_entorno({}).limite_pedidos_min == 300
+    assert Config.desde_entorno({"TP2_LIMITE_PEDIDOS_MIN": "0"}).limite_pedidos_min == 0
+    assert Config.desde_entorno({"TP2_LIMITE_PEDIDOS_MIN": "5"}).limite_pedidos_min == 5

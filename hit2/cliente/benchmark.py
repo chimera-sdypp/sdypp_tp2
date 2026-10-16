@@ -83,7 +83,7 @@ def main():
     parser.add_argument("--imagen", default="cerberusdistribuido/tarea:1.0.0")
     parser.add_argument("--tareas", type=int, default=32, help="tareas por medición")
     parser.add_argument("--repeticiones", type=int, default=3)
-    parser.add_argument("--token", default=os.environ.get("TP2_API_TOKEN", ""), help="token de autenticación")
+    parser.add_argument("--token", default=os.environ.get("TP2_TOKEN", ""), help="JWT (Authorization: Bearer), ver evidencias/emitir_token.py")
     args = parser.parse_args()
 
     filas = []

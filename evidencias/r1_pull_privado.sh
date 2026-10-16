@@ -18,6 +18,10 @@ RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
 HIT="${1:-hit1}"
 IMAGEN="cerberusdistribuido/tarea:1.0.0"
 PUERTO="${TP2_PUERTO:-18090}"
+# Autenticación (R4): secreto efímero para los JWT y un token de usuario para los pedidos.
+TP2_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export TP2_JWT_SECRET
+TP2_TOKEN="$(python3 "$RAIZ/evidencias/emitir_token.py" --usuario ana --rol usuario --horas 2)"
 ENTORNO="$(mktemp)"
 CONFIG="$(mktemp -d)"
 COMPOSE=(docker compose -f "$RAIZ/$HIT/docker-compose.yml" --env-file "$ENTORNO")
@@ -58,15 +62,16 @@ por_el_servidor() {  # $1 = token que se le configura al servidor ("" = ninguno)
 DOCKER_GID=$(stat -c %g /var/run/docker.sock)
 TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea
 TP2_PUERTO=$PUERTO
+TP2_JWT_SECRET=$TP2_JWT_SECRET
 TP2_REGISTRY_USUARIO=$USUARIO
 TP2_REGISTRY_TOKEN=$1
 FIN
     "${COMPOSE[@]}" up --build -d --wait >/dev/null 2>&1
     comando "docker image rm $IMAGEN                  # que el servidor la tenga que bajar"
     docker image rm "$IMAGEN" 2>/dev/null || echo "(no estaba en el host)"
-    comando "curl -s -X POST localhost:$PUERTO/getRemoteTask -H 'Content-Type: application/json' -d '$CUERPO'"
+    comando "curl -s -X POST localhost:$PUERTO/getRemoteTask -H 'Authorization: Bearer \$TP2_TOKEN' -H 'Content-Type: application/json' -d '$CUERPO'"
     curl -s -w '\nHTTP %{http_code}\n' -X POST "http://127.0.0.1:$PUERTO/getRemoteTask" \
-        -H 'Content-Type: application/json' -d "$CUERPO"
+        -H "Authorization: Bearer $TP2_TOKEN" -H 'Content-Type: application/json' -d "$CUERPO"
     comando "docker compose logs | grep -E 'descargando|IMAGEN_INEXISTENTE'      # log del servidor"
     "${COMPOSE[@]}" logs --no-log-prefix 2>&1 | grep -E 'descargando|IMAGEN_INEXISTENTE' | cut -d'|' -f2-
     "${COMPOSE[@]}" down -v >/dev/null 2>&1

@@ -63,8 +63,16 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
 ```bash
 cd hit2
 cp .env.example .env
-# Configurar variables en .env (por ejemplo TP2_WORKERS_MAX=4)
+# Completar .env: TP2_WORKERS_MAX=4 y, obligatorio, TP2_JWT_SECRET (mínimo 32 caracteres;
+# sin él el servidor no arranca). Un secreto nuevo: python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 docker compose up --build -d --wait
+```
+
+Para mandar tareas hace falta un token (ver [la sección 8](#8-autenticación-por-request-roles-y-stats-r4)):
+```bash
+export TP2_JWT_SECRET=...   # el mismo del .env
+export TP2_TOKEN=$(python3 ../evidencias/emitir_token.py --usuario ana --rol usuario)
+python3 cliente/cliente.py suma '{"a": 3, "b": 4}'
 ```
 
 ### Paso 2: Verificar Estado (/health)
@@ -268,20 +276,69 @@ Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo c�
 
 ---
 
-## 8. Tareas Diversas y Matriz de Parámetros (R5)
+## 8. Autenticación por request, roles y /stats (R4)
+
+El servidor no guarda sesión: cada pedido trae su identidad y su rol en un **JWT** (HS256) en
+`Authorization: Bearer <token>`, y se valida en cada llamada. El token lleva `sub` (el usuario),
+`role` (`usuario` o `admin`) y `exp` (cuándo vence, obligatorio).
+
+| Ruta | Sin token | Rol `usuario` | Rol `admin` |
+|---|---|---|---|
+| `GET /health` | 200 (pública: la usan el healthcheck y el despliegue) | 200 | 200 |
+| `POST /getRemoteTask` | 401 | ejecuta la tarea | ejecuta la tarea |
+| `GET /stats` | 401 | 403 | 200 |
+| cualquier otra ruta | 401 | 404/405 | 404/405 |
+
+- **Quién valida:** un middleware, antes de leer el cuerpo y de encolar nada. Una ruta nueva pide token por defecto: sólo `/health` figura como pública.
+- **401 `NO_AUTORIZADO`:** falta el token, no es un JWT, está firmado con otro secreto, no tiene `exp` o venció (el mensaje dice cuál). Trae `WWW-Authenticate: Bearer`. Sólo se acepta HS256: un token sin firma (`alg: none`) se rechaza.
+- **403 `ROL_INSUFICIENTE`:** el token es válido pero el rol no alcanza (usuario en `/stats`) o no es uno de los dos roles.
+- **429 `DEMASIADOS_PEDIDOS`:** cada usuario tiene `TP2_LIMITE_PEDIDOS_MIN` pedidos por minuto (300 por defecto; 0 lo apaga), con un balde de fichas en memoria. Trae `Retry-After`. Los pedidos sin token no gastan fichas de nadie. Es un contador por identidad, no una sesión: se reinicia con el servidor.
+- **Fail-closed:** si `TP2_JWT_SECRET` falta o tiene menos de 32 caracteres, el servidor no arranca.
+- **Secretos:** el secreto llega al contenedor como archivo (`/run/secrets/jwt_secret`), no como variable, y no se versiona (`.env` está en `.gitignore`). Los tokens los emite `evidencias/emitir_token.py` (sólo librería estándar) con el secreto del entorno.
+
+### `GET /stats` (admin)
+
+```bash
+export TP2_JWT_SECRET=...
+ADMIN=$(python3 evidencias/emitir_token.py --usuario root --rol admin)
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8082/stats
+```
+```json
+{"codigo": 200, "contenido": {
+  "tareas_ejecutadas": 2, "tareas_fallidas": 0,
+  "tareas_por_imagen": {"docker.io/cerberusdistribuido/tarea:test": {"ejecutadas": 2, "fallidas": 0}},
+  "latencia_s": {"promedio": 0.45, "p95": 0.463, "muestras": 2},
+  "tareas_en_cola": 0, "workers_ocupados": 0, "workers_max": 4,
+  "pedidos_por_codigo": {"200": 2, "401": 3, "422": 5, "429": 1},
+  "desde": "2026-10-16T02:55:15+00:00", "uptime_s": 6, "lamport_ts": 42}}
+```
+- **Ejecutada** es la tarea que terminó bien en su contenedor; **fallida**, la que llegó a ejecutarse y terminó mal (la tarea rechazó los parámetros, falló, no contestó, no se pudo bajar la imagen). Lo que se rechaza antes de ejecutar (401, 403, 413, 422 de validación...) no es una tarea: aparece en `pedidos_por_codigo`.
+- **Latencia:** tiempo total de la tarea, cola incluida, sobre las últimas 1000 tareas; el p95 es por rango (nearest-rank).
+- Todo vive en memoria: se reinicia con el servidor.
+
+### Evidencia
+
+```bash
+evidencias/r4_autenticacion.sh hit2
+```
+Levanta el servidor con un secreto efímero y un límite de 5 pedidos por minuto, y prueba con `curl`: sin token → 401; token de usuario en `/stats` → 403; token de admin en `/stats` → 200; token con otra firma, vencido o que no es un JWT → 401; el usuario y el admin ejecutan una tarea → 200; el pedido 6 de un usuario en el mismo minuto → 429 con `Retry-After`. Sale con error si algún código no coincide. Con `TP2_URL` y `TP2_JWT_SECRET` se corre contra un servidor ya levantado.
+
+---
+
+## 9. Tareas Diversas y Matriz de Parámetros (R5)
 
 Para evaluar el comportamiento del sistema bajo cargas heterogéneas, se desarrollaron **3 imágenes de tareas especializadas**:
 1. **CPU-bound (`cerberusdistribuido/tarea:cpu-1.0.0`)**: cálculo intensivo de primos (hasta 1.000.000) y Proof-of-Work SHA-256 (`hit2/tareas/cpu/`).
 2. **Procesamiento de Archivos (`cerberusdistribuido/tarea:archivos-1.0.0`)**: ingestión de hasta 200 archivos aplicando un pipeline de hasta 5 acciones (`hit2/tareas/archivos/`).
 3. **Fallas y Timeouts (`cerberusdistribuido/tarea:falla-1.0.0`)**: inyección de excepciones 500, timeouts controlados y validación de parámetros (`hit2/tareas/falla/`).
 
-### 8.1 Resumen de Rendimiento de la Matriz $V_1 \times V_2 \times V_3$
+### 9.1 Resumen de Rendimiento de la Matriz $V_1 \times V_2 \times V_3$
 
 La matriz combinatoria completa de 27 celdas se encuentra documentada en detalle en el informe dedicado:
 👉 **[Ver Informe Completo de Evidencia R5 (R5_INFORME.md)](../evidencias/R5_INFORME.md)**
 
 Diseño experimental y variables:
-- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo; el cuerpo mide 331 B, 2 KB y 18,7 KB para 1, 10 y 100 archivos (el límite es 64 KiB). La latencia está dominada por el ciclo de vida del contenedor (~0.67 s con un solo cliente): de 1 a 100 archivos el p50 sube sólo de 0.67 a 0.76 s.
+- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo; el cuerpo mide 331 B, 2 KB y 18,7 KB para 1, 10 y 100 archivos (el límite es 64 KiB). La latencia está dominada por el ciclo de vida del contenedor (~0.66 s con un solo cliente): de 1 a 100 archivos el p50 sube sólo de 0.656 a 0.722 s.
 - **$V_2$ (Acciones en pipeline)**: `1`, `3`, `5`. El valor 5 ($N=5$) agota la totalidad de las operaciones implementadas en el servicio tarea (`hash_sha256`, `comprimir`, `contar_palabras`, `rotar_lineas`, `analisis_frecuencia`), evaluando la profundidad máxima del pipeline.
 - **$V_3$ (Concurrencia)**: `1`, `10`, `50` clientes simultáneos con calentamiento previo y 15, 20 y 50 pedidos por celda. Son pocas muestras y una sola corrida: sirven para comparar celdas entre sí, no como valores absolutos.
 - **Medición empírica de cuellos de botella**: Sondeo continuo de `/health` durante cada corrida para registrar los valores reales de `workers_activos` y `tareas_encoladas`.
@@ -290,15 +347,13 @@ Rangos de las 9 celdas de cada $V_3$ en la corrida que está en `mediciones/matr
 
 | Régimen de Concurrencia | Clientes ($V_3$) | Latencia p50 Típica | Latencia p95 Típica | Diagnóstico Empírico del Cuello de Botella (Medido en `/health`) |
 |---|---|---|---|---|
-| **Baja / Secuencial** | 1 | 0.67 – 0.76 s | 0.68 – 0.77 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero |
-| **Media** | 10 | 1.53 – 1.72 s | 1.67 – 1.86 s | `/health`: 4/4 workers activos y hasta 4 tareas encoladas. Cuello de botella: el número de workers |
-| **Alta** | 50 | 4.51 – 4.81 s | 8.06 – 8.57 s | `/health`: 4/4 workers activos y hasta 35 tareas encoladas. Cuello de botella: el número de workers. Si el daemon de Docker también contribuye no se midió |
+| **Baja / Secuencial** | 1 | 0.66 – 0.76 s | 0.67 – 0.95 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero |
+| **Media** | 10 | 1.43 – 1.59 s | 1.55 – 1.79 s | `/health`: 4/4 workers activos y hasta 4 tareas encoladas. Cuello de botella: el número de workers |
+| **Alta** | 50 | 4.17 – 4.56 s | 7.53 – 8.18 s | `/health`: 4/4 workers activos y hasta 35 tareas encoladas. Cuello de botella: el número de workers. Si el daemon de Docker también contribuye no se midió |
 
-### 8.2 Autenticación en Middleware y Rechazo de Bots (R5)
-- **Rechazo estricto:** 100% de las solicitudes emitidas por bots (sin token o con token inválido) son rechazadas con HTTP `401 NO_AUTORIZADO`.
-- **Intercepción perimetral en middleware:** La validación se ejecuta en el `@app.middleware("http")` de FastAPI, rechazando peticiones antes de acceder a la cola con exclusión mutua o instanciar contenedores.
-- **Múltiples usuarios:** El servidor soporta múltiples tokens concurrentes (`TP2_API_TOKEN` con valores separados por comas), simulando identidades legítimas diferenciadas.
-- **Alcance R4 vs R5:** Hit 2 implementa esta intercepción perimetral para aislar bots y medir la contención en R5; la autenticación con roles diferenciados, expiración de tokens, política fail-closed por defecto y `/stats` pertenece a la especificación de R4.
+### 9.2 Bots sin token en la matriz
+- Todas las celdas mezclan 3 usuarios con JWT distintos y un 20 % de pedidos de bots, sin token o con uno inválido. El servidor los rechaza con `401 NO_AUTORIZADO` antes de la cola y sin crear contenedores (ver [la sección 8](#8-autenticación-por-request-roles-y-stats-r4)).
+- La matriz se corre con `TP2_LIMITE_PEDIDOS_MIN=0` (sin límite por usuario): los 429 no son parte de la medición.
 
 Para reproducir la evaluación completa:
 ```bash
@@ -309,7 +364,7 @@ Para reproducir la evaluación completa:
 
 ---
 
-## 9. Despliegue
+## 10. Despliegue
 
 Público en **http://18.231.127.74:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
 
@@ -324,7 +379,7 @@ flowchart LR
 
 - En cada push a `main`, después de gitleaks y de los tests unitarios y de integración, el CI (`.github/workflows/ci.yml`) publica la imagen del servidor en GHCR (`ghcr.io/chimera-sdypp/sdypp_tp2-hit2`) con el `GITHUB_TOKEN` efímero del job.
 - En la VM, un timer de systemd (`sdypp-tp2-hit2.timer`) hace `docker compose pull && up -d` cada 5 minutos, con el mismo candado (`flock`) que los timers de los otros hits. GitHub no tiene ninguna credencial de la VM.
-- Después, el CI prueba lo desplegado: manda con el cliente una suma (`200`, con su `lamport_ts`) y una división por cero (`422`) a la URL pública.
+- Después, el CI prueba lo desplegado sin ningún secreto: `/health` responde `200` y `/stats` y `/getRemoteTask` sin token responden `401`.
 - El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales.
 
 ### Instalación en la VM:
@@ -333,7 +388,8 @@ flowchart LR
 scp -i clave.pem hit2/despliegue/instalar_vm.sh hit2/docker-compose.yml ubuntu@<IP>:
 ssh -i clave.pem ubuntu@<IP>
 # en la VM: crear ~/.env a partir de .env.example, con TP2_PUERTO=8082 y
-#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit2:latest; luego:
+#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit2:latest y TP2_JWT_SECRET=<secreto de 32+ caracteres>
+#   (sin el secreto el servidor no arranca); luego:
 sudo bash instalar_vm.sh && rm ~/.env
 ```
 

@@ -32,8 +32,11 @@ cp .env.example .env
 #   TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea
 #   TP2_REGISTRY_USUARIO=cerberusdistribuido
 #   TP2_REGISTRY_TOKEN=<token de Docker Hub de sólo lectura>
+#   TP2_JWT_SECRET=<mínimo 32 caracteres, el mismo en los 3 nodos: python3 -c 'import secrets; print(secrets.token_urlsafe(48))'>
 docker compose up --build -d --wait
 curl -s localhost:8080/health          # contesta alguno de los 3 nodos: dice quién es el coordinador
+export TP2_JWT_SECRET=...              # el mismo del .env
+export TP2_TOKEN=$(python3 ../evidencias/emitir_token.py --usuario ana --rol usuario)   # ver "Autenticación"
 python3 cliente/cliente.py suma '{"a": 3, "b": 4}' --imagen cerberusdistribuido/tarea:1.0.0
 ```
 
@@ -352,6 +355,26 @@ Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo c�
 | Inexistente (tag o digest) | 422 | `IMAGEN_INEXISTENTE` |
 | No es un servicio tarea | 502 | `TAREA_FALLIDA` |
 
+## Autenticación por request, roles y /stats (R4)
+
+El servidor no guarda sesión: cada pedido trae su identidad y su rol en un **JWT** (HS256) en
+`Authorization: Bearer <token>` (`sub` = usuario, `role` = `usuario` o `admin`, `exp` = vencimiento
+obligatorio), y se valida en cada llamada, antes de leer el cuerpo.
+
+| Ruta | Sin token | Rol `usuario` | Rol `admin` |
+|---|---|---|---|
+| `GET /health` | 200 (pública) | 200 | 200 |
+| `POST /getRemoteTask` | 401 | ejecuta la tarea | ejecuta la tarea |
+| `GET /stats` | 401 | 403 | 200 |
+
+- **Dónde se valida**: en cada nodo, con el mismo secreto. Las rutas `/cluster/*` (entre nodos) no llevan token: nginx no las publica y los nodos sólo se ven por la red interna `cluster`.
+- **Límite por usuario por nodo**: cada nodo cuenta sus pedidos y nginx reparte entre los tres, así que el límite efectivo del cluster es de hasta 3 veces `TP2_LIMITE_PEDIDOS_MIN`.
+- **401 `NO_AUTORIZADO`**: falta el token, no es un JWT, está firmado con otro secreto, no tiene `exp` o venció. **403 `ROL_INSUFICIENTE`**: el token es válido pero el rol no alcanza. **429 `DEMASIADOS_PEDIDOS`**: más de `TP2_LIMITE_PEDIDOS_MIN` pedidos por minuto (300 por defecto; 0 lo apaga) de un mismo usuario, con `Retry-After`.
+- **Fail-closed**: si `TP2_JWT_SECRET` falta o tiene menos de 32 caracteres, el servidor no arranca. El secreto llega al contenedor como archivo (`/run/secrets/jwt_secret`) y no se versiona.
+- **Emitir tokens**: `TP2_JWT_SECRET=... python3 evidencias/emitir_token.py --usuario ana --rol usuario` (sólo librería estándar; `--rol admin`, `--horas`, `--segundos -5` para uno vencido).
+- **`GET /stats`** (admin): tareas ejecutadas y fallidas, tareas por imagen, latencia promedio y p95 (últimas 1000 tareas), tareas en cola (siempre 0: el coordinador asigna cada tarea a un nodo y se ejecuta ya), workers ocupados (las tareas en curso de los 3 nodos), pedidos por código HTTP y el desglose por nodo. **Es del cluster entero**: cada tarea la cuenta el nodo que recibió el pedido y el que atiende `/stats` le pide los números a los otros dos (`GET /cluster/stats`, interno); si alguno no contesta, `nodos_sin_respuesta` lo dice y los totales son parciales. Todo en memoria: se reinicia con el nodo. El detalle de cada campo está en la [sección 8 del Hit 2](../hit2/README.md#8-autenticación-por-request-roles-y-stats-r4).
+- **Evidencia**: `evidencias/r4_autenticacion.sh hit1` levanta el servidor con un secreto efímero y prueba con `curl` (16 pedidos seguidos, porque el límite es por nodo) sin token → 401, usuario en `/stats` → 403, admin en `/stats` → 200, token inválido o vencido → 401 y el 429.
+
 ## Despliegue
 
 En la misma VM de AWS EC2 que los Hits 1 y 2: **http://18.231.127.74:8083/health**. Como en los
@@ -387,7 +410,8 @@ Instalarlo en una VM Ubuntu con Docker:
 scp -i clave.pem hit3/despliegue/instalar_vm.sh hit3/docker-compose.yml hit3/nginx/nginx.conf ubuntu@<IP>:
 ssh -i clave.pem ubuntu@<IP>
 # en la VM: crear ~/.env como el .env.example, con TP2_PUERTO=8083 y
-#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit3:latest; después:
+#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit3:latest y TP2_JWT_SECRET=<32+ caracteres>
+#   (sin el secreto los nodos no arrancan); después:
 sudo bash instalar_vm.sh && rm ~/.env
 ```
 
@@ -406,6 +430,8 @@ Variables de entorno de cada nodo, además de las del Hit 1 (ver [`.env.example`
 | `TP2_VENCIMIENTO_NODO` | `3` s | Sin heartbeat en ese tiempo, el coordinador da al nodo por caído |
 | `TP2_TIMEOUT_COORDINADOR` | `3` s | Después de un `OK`, cuánto se espera el `COORDINADOR` |
 | `TP2_TIMEOUT_ASIGNACION` | `10` s | Cuánto espera una tarea a que haya coordinador |
+| `TP2_JWT_SECRET` | (obligatorio) | Secreto de los JWT, mínimo 32 caracteres, el mismo en los 3 nodos (o `TP2_JWT_SECRET_ARCHIVO`) |
+| `TP2_LIMITE_PEDIDOS_MIN` | `300` | Pedidos por minuto y por usuario, contados en cada nodo (0 = sin límite) |
 
 El resto (credenciales del registry, lista blanca, validación, logs) es el del Hit 1: ver su
 [README](../hit1/README.md) y el [contrato](contrato.md) de este hit.

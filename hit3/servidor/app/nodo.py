@@ -11,6 +11,7 @@ Cada nodo cumple tres papeles a la vez:
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from app.bully import Bully
 from app.cluster import RegistroNodos
@@ -77,6 +78,24 @@ class Nodo:
         mismo y se asigna todas las tareas."""
         for nodo in aceptaron:
             self.registro.conocer(nodo)
+
+    def estadisticas_de_los_pares(self):
+        """El `/cluster/stats` de cada par, en paralelo → ({id: contenido}, [ids que no contestaron])."""
+        def consultar(par):
+            nodo, url = par
+            try:
+                estado, respuesta = self._http("GET", url + "/cluster/stats", timeout=self._config.timeout_mensaje)
+            except (SinConexion, Vencido):
+                return nodo, None
+            contenido = respuesta.get("contenido") if isinstance(respuesta, dict) else None
+            return nodo, contenido if estado == 200 and isinstance(contenido, dict) else None
+
+        pares = self._config.pares
+        if not pares:
+            return {}, []
+        with ThreadPoolExecutor(max_workers=len(pares)) as ejecutor:
+            resultados = list(ejecutor.map(consultar, pares))
+        return ({n: c for n, c in resultados if c is not None}, [n for n, c in resultados if c is None])
 
     # ---------------------------------------------------------------- coordinador
     def recibir_heartbeat(self, de, tareas_en_curso):

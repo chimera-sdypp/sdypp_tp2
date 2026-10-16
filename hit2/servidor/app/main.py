@@ -4,54 +4,70 @@ Se levanta con `uvicorn --factory app.main:crear_app`. La fábrica recibe la
 configuración, el lanzador, el reloj de Lamport y el pool de workers.
 """
 
-import secrets
-
+import math
 import time
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import imagenes, registro
+from app import auth, imagenes, registro
 from app.config import Config
 from app.errores import ErrorApi, TipoError, responder, responder_error
+from app.estadisticas import Estadisticas
 from app.lamport import RelojLamport
 from app.lanzador import Lanzador
+from app.limitador import LimitadorPorUsuario
 from app.pool import PoolWorkers
 from app.validacion import validar_solicitud
 
 
 def crear_app(config=None, lanzador=None, reloj=None, pool=None):
     config = config or Config.desde_entorno()
+    auth.validar_secreto(config.jwt_secreto)
     log, _ = registro.configurar(config.dir_logs)
     lanzador = lanzador or Lanzador(config, log)
     reloj = reloj or RelojLamport()
     pool = pool or PoolWorkers(lanzador, config.workers_max, log)
+    estadisticas = Estadisticas()
+    limitador = LimitadorPorUsuario(config.limite_pedidos_min)
     permitidas = imagenes.lista_blanca(config.imagenes_permitidas)
     if not permitidas:
         log.warning("TP2_IMAGENES_PERMITIDAS está vacía: se va a rechazar toda tarea")
 
     app = FastAPI(title="TP2 · Hit 2 · Servidor con Pool de Workers y Relojes de Lamport", redirect_slashes=False)
 
+    # Qué rol hace falta en cada ruta. Una ruta que no está acá pide un token válido de
+    # cualquier rol; sólo `/health` es pública (lo usan el healthcheck y el despliegue).
+    rutas_publicas = {"/health"}
+    roles_por_ruta = {"/stats": {auth.ROL_ADMIN}}
+
     @app.middleware("http")
     async def autenticacion(request: Request, call_next):
-        """Intercepción perimetral en middleware: valida tokens antes de encolar o despachar tareas."""
-        if config.api_token and request.url.path == "/getRemoteTask":
-            auth_header = request.headers.get("authorization") or request.headers.get("Authorization") or ""
-            api_header = request.headers.get("x-api-token") or request.headers.get("X-API-Token") or ""
-            token_recibido = ""
-            if auth_header.startswith("Bearer "):
-                token_recibido = auth_header[7:].strip()
-            elif api_header:
-                token_recibido = api_header.strip()
-
-            tokens_validos = [t.strip() for t in config.api_token.split(",") if t.strip()]
-            if not token_recibido or not any(secrets.compare_digest(token_recibido, tok) for tok in tokens_validos):
-                ts_salida = reloj.incrementar()
-                res = responder_error(ErrorApi(TipoError.NO_AUTORIZADO, "token de autenticación faltante o inválido"))
-                res.headers["X-Lamport-Clock"] = str(ts_salida)
-                return res
-
+        """Cada pedido trae su identidad: se valida el token, el rol de la ruta y el límite
+        por usuario, todo antes de leer el cuerpo y de encolar nada."""
+        ruta = request.url.path
+        if ruta in rutas_publicas:
+            return await call_next(request)
+        try:
+            identidad = auth.autenticar(request.headers.get("authorization"), config.jwt_secreto)
+            permitidos = roles_por_ruta.get(ruta)
+            if permitidos and identidad.rol not in permitidos:
+                raise ErrorApi(TipoError.ROL_INSUFICIENTE,
+                               f"{ruta} es sólo para {'/'.join(sorted(permitidos))} (tu rol: {identidad.rol})")
+            if ruta == "/getRemoteTask" and request.method == "POST":
+                espera = limitador.reservar(identidad.usuario)
+                if espera:
+                    reintentar = math.ceil(espera)
+                    raise ErrorApi(TipoError.DEMASIADOS_PEDIDOS,
+                                   f"más de {config.limite_pedidos_min} pedidos por minuto para {identidad.usuario}: "
+                                   f"reintentá en {reintentar} s",
+                                   cabeceras={"Retry-After": str(reintentar)})
+        except ErrorApi as error:
+            res = responder_error(error)
+            res.headers["X-Lamport-Clock"] = str(reloj.incrementar())
+            return res
+        request.state.identidad = identidad
         return await call_next(request)
 
     @app.middleware("http")
@@ -81,8 +97,12 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             respuesta.headers["X-Lamport-Clock"] = str(reloj.incrementar())
         ts_salida = int(respuesta.headers["x-lamport-clock"])
 
-        log.info("%s %s | %d | %.0f ms | lamport_ts=%d", request.method, request.url.path,
-                 respuesta.status_code, (time.perf_counter() - inicio) * 1000, ts_salida)
+        if request.url.path == "/getRemoteTask":
+            estadisticas.registrar_pedido(respuesta.status_code)
+        identidad = getattr(request.state, "identidad", None)
+        log.info("%s %s | %d | %.0f ms | lamport_ts=%d | usuario=%s", request.method, request.url.path,
+                 respuesta.status_code, (time.perf_counter() - inicio) * 1000, ts_salida,
+                 identidad.usuario if identidad else "-")
         return respuesta
 
     @app.exception_handler(ErrorApi)
@@ -136,14 +156,20 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
         log.info("tarea | %s | calculo=%s | lamport_ts=%d", imagen.referencia, solicitud.calculo, ts_solicitud)
 
         # Encolar en el pool de workers (con exclusión mutua y ordenamiento Lamport)
-        resultado = await run_in_threadpool(
-            pool.ejecutar_tarea,
-            imagen,
-            solicitud.calculo,
-            solicitud.parametros,
-            solicitud.datos,
-            ts_solicitud
-        )
+        inicio_tarea = time.perf_counter()
+        try:
+            resultado = await run_in_threadpool(
+                pool.ejecutar_tarea,
+                imagen,
+                solicitud.calculo,
+                solicitud.parametros,
+                solicitud.datos,
+                ts_solicitud
+            )
+        except Exception:
+            estadisticas.registrar_tarea(imagen.referencia, False, time.perf_counter() - inicio_tarea)
+            raise
+        estadisticas.registrar_tarea(imagen.referencia, True, time.perf_counter() - inicio_tarea)
 
         ts_respuesta = reloj.incrementar()
         return responder(
@@ -155,6 +181,13 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             },
             cabeceras={"X-Lamport-Clock": str(ts_respuesta)}
         )
+
+    @app.get("/stats")
+    def stats():
+        """Estadísticas del servidor, sólo para el rol admin (lo exige el middleware)."""
+        ts_respuesta = reloj.incrementar()
+        return responder(200, {**estadisticas.instantanea(pool), "lamport_ts": ts_respuesta},
+                         cabeceras={"X-Lamport-Clock": str(ts_respuesta)})
 
     @app.get("/health")
     def health():

@@ -19,12 +19,17 @@ pytestmark = pytest.mark.integracion
 
 URL = os.environ.get("TP2_URL", "http://127.0.0.1:8080").rstrip("/")
 IMAGEN = "cerberusdistribuido/tarea-prueba:test"
+# Los emite integracion.sh con el secreto del servidor (R4).
+TOKEN = os.environ.get("TP2_TOKEN", "")
+TOKEN_ADMIN = os.environ.get("TP2_TOKEN_ADMIN", "")
 
 
-def pedir(metodo, ruta, cuerpo=None):
+def pedir(metodo, ruta, cuerpo=None, token=TOKEN):
     datos = None if cuerpo is None else json.dumps(cuerpo).encode()
-    pedido = urllib.request.Request(URL + ruta, data=datos, method=metodo,
-                                    headers={"Content-Type": "application/json"})
+    cabeceras = {"Content-Type": "application/json"}
+    if token:
+        cabeceras["Authorization"] = f"Bearer {token}"
+    pedido = urllib.request.Request(URL + ruta, data=datos, method=metodo, headers=cabeceras)
     try:
         with urllib.request.urlopen(pedido, timeout=30) as r:
             return r.status, json.loads(r.read())
@@ -107,3 +112,24 @@ def test_no_quedan_contenedores_tarea(imagen):
     cliente = docker.from_env()
     restantes = cliente.containers.list(all=True, filters={"ancestor": imagen})
     assert restantes == [], [c.name for c in restantes]
+
+
+def test_sin_token_o_con_token_de_usuario_no_se_pasa():
+    codigo, cuerpo = pedir("POST", "/getRemoteTask", {"calculo": "suma", "parametros": {"a": 1, "b": 1}, "imagen": IMAGEN}, token="")
+    assert (codigo, cuerpo["contenido"]["error"]["tipo"]) == (401, "NO_AUTORIZADO")
+    codigo, cuerpo = pedir("GET", "/stats")
+    assert (codigo, cuerpo["contenido"]["error"]["tipo"]) == (403, "ROL_INSUFICIENTE")
+    codigo, _ = pedir("GET", "/stats", token="")
+    assert codigo == 401
+
+
+def test_stats_cuenta_lo_que_se_ejecuto():
+    tarea("suma", {"a": 1, "b": 2})
+    tarea("division", {"a": 1, "b": 0})            # la tarea la rechaza: fallida
+    codigo, cuerpo = pedir("GET", "/stats", token=TOKEN_ADMIN)
+    stats = cuerpo["contenido"]
+    assert codigo == 200
+    assert stats["tareas_ejecutadas"] >= 1 and stats["tareas_fallidas"] >= 1
+    assert any(imagen.endswith("tarea-prueba:test") for imagen in stats["tareas_por_imagen"])
+    assert stats["latencia_s"]["p95"] is not None
+    assert (stats["workers_max"], stats["tareas_en_cola"]) == (4, 0)

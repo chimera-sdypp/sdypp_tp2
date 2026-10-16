@@ -123,7 +123,7 @@ def main():
     parser.add_argument("--datos", type=json.loads, default={}, help="objeto JSON con datos adicionales")
     parser.add_argument("--imagen", default="cerberusdistribuido/tarea:1.0.0", help="imagen Docker de la tarea")
     parser.add_argument("--servidor", default=os.environ.get("TP2_SERVIDOR", "http://localhost:8080"))
-    parser.add_argument("--token", default=os.environ.get("TP2_API_TOKEN", ""), help="token de autenticación")
+    parser.add_argument("--token", default=os.environ.get("TP2_TOKEN", ""), help="JWT (Authorization: Bearer), ver evidencias/emitir_token.py")
     args = parser.parse_args()
 
     cliente = ClienteHit2(args.servidor, token=args.token)

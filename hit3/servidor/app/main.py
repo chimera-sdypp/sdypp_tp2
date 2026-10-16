@@ -10,6 +10,7 @@ no necesitan Docker.
 """
 
 import json
+import math
 import time
 from contextlib import asynccontextmanager
 
@@ -18,10 +19,12 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import imagenes, registro
+from app import auth, imagenes, registro
 from app.config import Config
 from app.errores import ErrorApi, TipoError, responder, responder_error
+from app.estadisticas import Estadisticas, resumir
 from app.lanzador import Lanzador
+from app.limitador import LimitadorPorUsuario
 from app.nodo import Nodo
 from app.validacion import validar_solicitud
 
@@ -49,9 +52,12 @@ async def _leer_mensaje(request, modelo):
 
 def crear_app(config=None, lanzador=None, nodo=None):
     config = config or Config.desde_entorno()
+    auth.validar_secreto(config.jwt_secreto)
     log, _ = registro.configurar(config.dir_logs)
     lanzador = lanzador or Lanzador(config, log)
     nodo = nodo or Nodo(config, log, lanzador)
+    estadisticas = Estadisticas()
+    limitador = LimitadorPorUsuario(config.limite_pedidos_min)
     permitidas = imagenes.lista_blanca(config.imagenes_permitidas)
     if not permitidas:
         log.warning("TP2_IMAGENES_PERMITIDAS está vacía: se va a rechazar toda tarea")
@@ -68,6 +74,38 @@ def crear_app(config=None, lanzador=None, nodo=None):
     app = FastAPI(title="TP2 · Hit 3 · Nodo del cluster de tareas remotas", redirect_slashes=False,
                   lifespan=ciclo_de_vida)
 
+    # Qué rol hace falta en cada ruta. Una ruta que no está acá pide un token válido de
+    # cualquier rol; sólo `/health` es pública. Las `/cluster/*` son entre nodos: nginx no las
+    # publica y los nodos sólo se ven por la red interna `cluster`, así que no llevan token.
+    rutas_publicas = {"/health"}
+    roles_por_ruta = {"/stats": {auth.ROL_ADMIN}}
+
+    @app.middleware("http")
+    async def autenticacion(request, call_next):
+        """Cada pedido trae su identidad: se valida el token, el rol de la ruta y el límite
+        por usuario, todo antes de leer el cuerpo y de pedirle nada al cluster."""
+        ruta = request.url.path
+        if ruta in rutas_publicas or ruta.startswith("/cluster/"):
+            return await call_next(request)
+        try:
+            identidad = auth.autenticar(request.headers.get("authorization"), config.jwt_secreto)
+            permitidos = roles_por_ruta.get(ruta)
+            if permitidos and identidad.rol not in permitidos:
+                raise ErrorApi(TipoError.ROL_INSUFICIENTE,
+                               f"{ruta} es sólo para {'/'.join(sorted(permitidos))} (tu rol: {identidad.rol})")
+            if ruta == "/getRemoteTask" and request.method == "POST":
+                espera = limitador.reservar(identidad.usuario)
+                if espera:
+                    reintentar = math.ceil(espera)
+                    raise ErrorApi(TipoError.DEMASIADOS_PEDIDOS,
+                                   f"más de {config.limite_pedidos_min} pedidos por minuto para {identidad.usuario} "
+                                   f"en este nodo: reintentá en {reintentar} s",
+                                   cabeceras={"Retry-After": str(reintentar)})
+        except ErrorApi as error:
+            return responder_error(error)
+        request.state.identidad = identidad
+        return await call_next(request)
+
     @app.middleware("http")
     async def bitacora(request, call_next):
         """Una línea de log por pedido. Un error inesperado sale como 500 en el
@@ -78,8 +116,11 @@ def crear_app(config=None, lanzador=None, nodo=None):
         except Exception:
             log.exception("%s %s | error inesperado", request.method, request.url.path)
             respuesta = responder_error(ErrorApi(TipoError.ERROR_INTERNO, "error interno del servidor"))
-        log.info("%s %s | %d | %.0f ms", request.method, request.url.path, respuesta.status_code,
-                 (time.perf_counter() - inicio) * 1000)
+        if request.url.path == "/getRemoteTask":
+            estadisticas.registrar_pedido(respuesta.status_code)
+        identidad = getattr(request.state, "identidad", None)
+        log.info("%s %s | %d | %.0f ms | usuario=%s", request.method, request.url.path, respuesta.status_code,
+                 (time.perf_counter() - inicio) * 1000, identidad.usuario if identidad else "-")
         return respuesta
 
     @app.exception_handler(ErrorApi)
@@ -125,9 +166,35 @@ def crear_app(config=None, lanzador=None, nodo=None):
         solicitud, imagen = await _solicitud(request)
         log.info("tarea | %s | calculo=%s", imagen.referencia, solicitud.calculo)
         # En un hilo: el servidor sigue atendiendo pedidos mientras corre la tarea.
-        resultado, ejecutor = await run_in_threadpool(nodo.ejecutar, imagen, solicitud.calculo,
-                                                      solicitud.parametros, solicitud.datos)
+        inicio_tarea = time.perf_counter()
+        try:
+            resultado, ejecutor = await run_in_threadpool(nodo.ejecutar, imagen, solicitud.calculo,
+                                                          solicitud.parametros, solicitud.datos)
+        except Exception:
+            estadisticas.registrar_tarea(imagen.referencia, False, time.perf_counter() - inicio_tarea)
+            raise
+        estadisticas.registrar_tarea(imagen.referencia, True, time.perf_counter() - inicio_tarea)
         return responder(200, {"calculo": solicitud.calculo, "resultado": resultado, "nodo": ejecutor})
+
+    @app.get("/stats")
+    async def stats():
+        """Estadísticas de todo el cluster, sólo para el rol admin (lo exige el middleware).
+        Cada tarea la cuenta el nodo que recibió el pedido; éste junta los números de los tres."""
+        pares, sin_respuesta = await run_in_threadpool(nodo.estadisticas_de_los_pares)
+        propio = {"estadisticas": estadisticas.exportar(), "tareas_en_curso": nodo.tareas_en_curso}
+        por_nodo = {nodo.mi_id: propio, **{n: c for n, c in pares.items()}}
+        contenido = resumir([c["estadisticas"] for c in por_nodo.values()])
+        contenido.update({
+            "tareas_en_cola": 0,    # no hay cola: el coordinador asigna cada tarea a un nodo y se ejecuta ya
+            "workers_ocupados": sum(c["tareas_en_curso"] for c in por_nodo.values()),
+            "workers_max": None,
+            "nodos": {str(n): {"tareas_ejecutadas": c["estadisticas"]["ejecutadas"],
+                               "tareas_fallidas": c["estadisticas"]["fallidas"],
+                               "workers_ocupados": c["tareas_en_curso"]} for n, c in sorted(por_nodo.items())},
+            "nodos_sin_respuesta": sorted(sin_respuesta),
+            "atendido_por": nodo.mi_id,
+        })
+        return responder(200, contenido)
 
     @app.get("/health")
     def health():
@@ -142,6 +209,10 @@ def crear_app(config=None, lanzador=None, nodo=None):
                          {"servidor": "ok", "docker": "ok" if docker_ok else "caido", "cluster": cluster})
 
     # ------------------------------------------------- entre nodos (nginx no las publica)
+    @app.get("/cluster/stats")
+    def stats_del_nodo():
+        return responder(200, {"estadisticas": estadisticas.exportar(), "tareas_en_curso": nodo.tareas_en_curso})
+
     @app.post("/cluster/eleccion")
     async def eleccion(request: Request):
         mensaje = await _leer_mensaje(request, _Mensaje)

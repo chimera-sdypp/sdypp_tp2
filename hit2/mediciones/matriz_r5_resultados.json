@@ -1,5 +1,5 @@
 {
-  "timestamp": 1792118373.8597245,
+  "timestamp": 1792119602.74626,
   "servidor": "http://127.0.0.1:18090",
   "timeout_ejecucion": 60.0,
   "pruebas_tareas": [
@@ -10,7 +10,7 @@
       "http_obtenido": 200,
       "tipo_error": "\u2014",
       "mensaje": "OK (resultado devuelto)",
-      "latencia_s": 0.465,
+      "latencia_s": 0.68,
       "cumple": true
     },
     {
@@ -20,7 +20,7 @@
       "http_obtenido": 200,
       "tipo_error": "\u2014",
       "mensaje": "OK (resultado devuelto)",
-      "latencia_s": 0.763,
+      "latencia_s": 0.736,
       "cumple": true
     },
     {
@@ -30,7 +30,7 @@
       "http_obtenido": 422,
       "tipo_error": "TAREA_RECHAZADA",
       "mensaje": "'limite' supera el m\u00e1ximo permitido (1000000)",
-      "latencia_s": 0.686,
+      "latencia_s": 0.461,
       "cumple": true
     },
     {
@@ -40,7 +40,7 @@
       "http_obtenido": 422,
       "tipo_error": "TAREA_RECHAZADA",
       "mensaje": "'limite' debe ser un entero mayor a 1",
-      "latencia_s": 0.681,
+      "latencia_s": 0.466,
       "cumple": true
     },
     {
@@ -50,7 +50,7 @@
       "http_obtenido": 200,
       "tipo_error": "\u2014",
       "mensaje": "OK (resultado devuelto)",
-      "latencia_s": 0.669,
+      "latencia_s": 0.633,
       "cumple": true
     },
     {
@@ -60,7 +60,7 @@
       "http_obtenido": 200,
       "tipo_error": "\u2014",
       "mensaje": "OK (resultado devuelto)",
-      "latencia_s": 0.666,
+      "latencia_s": 0.473,
       "cumple": true
     },
     {
@@ -70,7 +70,7 @@
       "http_obtenido": 422,
       "tipo_error": "TAREA_RECHAZADA",
       "mensaje": "la cantidad de archivos supera el l\u00edmite permitido (200)",
-      "latencia_s": 0.651,
+      "latencia_s": 0.649,
       "cumple": true
     },
     {
@@ -80,7 +80,7 @@
       "http_obtenido": 422,
       "tipo_error": "TAREA_RECHAZADA",
       "mensaje": "tamano_kb (1024 KB) supera el l\u00edmite m\u00e1ximo permitido (512 KB)",
-      "latencia_s": 0.653,
+      "latencia_s": 0.659,
       "cumple": true
     },
     {
@@ -90,7 +90,7 @@
       "http_obtenido": 422,
       "tipo_error": "TAREA_RECHAZADA",
       "mensaje": "acci\u00f3n inv\u00e1lida 'accion_falsa'. Permitidas: ['analisis_frecuencia', 'comprimir', 'contar_palabras', 'hash_sha256', 'rotar_lineas']",
-      "latencia_s": 0.667,
+      "latencia_s": 0.458,
       "cumple": true
     },
     {
@@ -100,7 +100,7 @@
       "http_obtenido": 200,
       "tipo_error": "\u2014",
       "mensaje": "OK (resultado devuelto)",
-      "latencia_s": 0.762,
+      "latencia_s": 0.769,
       "cumple": true
     },
     {
@@ -110,7 +110,7 @@
       "http_obtenido": 422,
       "tipo_error": "TAREA_RECHAZADA",
       "mensaje": "divisi\u00f3n por cero",
-      "latencia_s": 0.65,
+      "latencia_s": 0.447,
       "cumple": true
     },
     {
@@ -120,7 +120,7 @@
       "http_obtenido": 502,
       "tipo_error": "TAREA_FALLIDA",
       "mensaje": "la tarea fall\u00f3 o devolvi\u00f3 una respuesta inv\u00e1lida",
-      "latencia_s": 0.458,
+      "latencia_s": 0.453,
       "cumple": true
     },
     {
@@ -143,19 +143,19 @@
       "pedidos_exitosos": 12,
       "pedidos_bot_totales": 3,
       "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.24,
+      "latencia_bot_avg_ms": 1.15,
       "distribucion_codigos": {
         "200": 12,
         "401": 3
       },
-      "p50_latencia_s": 0.665,
-      "p95_latencia_s": 0.681,
-      "throughput_tpm": 90.1,
+      "p50_latencia_s": 0.656,
+      "p95_latencia_s": 0.669,
+      "throughput_tpm": 95.9,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 7.99,
+      "tiempo_total_s": 7.5,
       "workers_activos_medidos": 1,
       "tareas_encoladas_medidas": 0,
-      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.67 s)"
+      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.66 s)"
     },
     {
       "v1_archivos": 1,
@@ -165,16 +165,16 @@
       "pedidos_exitosos": 16,
       "pedidos_bot_totales": 4,
       "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 7.04,
+      "latencia_bot_avg_ms": 6.55,
       "distribucion_codigos": {
         "401": 4,
         "200": 16
       },
-      "p50_latencia_s": 1.529,
-      "p95_latencia_s": 1.677,
-      "throughput_tpm": 297.5,
+      "p50_latencia_s": 1.431,
+      "p95_latencia_s": 1.553,
+      "throughput_tpm": 316.9,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.23,
+      "tiempo_total_s": 3.03,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 4,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
@@ -187,16 +187,16 @@
       "pedidos_exitosos": 40,
       "pedidos_bot_totales": 10,
       "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 36.67,
+      "latencia_bot_avg_ms": 38.27,
       "distribucion_codigos": {
         "401": 10,
         "200": 40
       },
-      "p50_latencia_s": 4.532,
-      "p95_latencia_s": 8.116,
-      "throughput_tpm": 294.4,
+      "p50_latencia_s": 4.17,
+      "p95_latencia_s": 7.531,
+      "throughput_tpm": 317.3,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.15,
+      "tiempo_total_s": 7.56,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 35,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
@@ -209,19 +209,19 @@
       "pedidos_exitosos": 12,
       "pedidos_bot_totales": 3,
       "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.15,
+      "latencia_bot_avg_ms": 0.97,
       "distribucion_codigos": {
         "200": 12,
         "401": 3
       },
-      "p50_latencia_s": 0.7,
-      "p95_latencia_s": 0.71,
-      "throughput_tpm": 85.7,
+      "p50_latencia_s": 0.671,
+      "p95_latencia_s": 0.691,
+      "throughput_tpm": 89.2,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.4,
+      "tiempo_total_s": 8.07,
       "workers_activos_medidos": 1,
       "tareas_encoladas_medidas": 0,
-      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.7 s)"
+      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.67 s)"
     },
     {
       "v1_archivos": 1,
@@ -231,16 +231,16 @@
       "pedidos_exitosos": 16,
       "pedidos_bot_totales": 4,
       "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 7.83,
+      "latencia_bot_avg_ms": 6.93,
       "distribucion_codigos": {
         "401": 4,
         "200": 16
       },
-      "p50_latencia_s": 1.547,
-      "p95_latencia_s": 1.669,
-      "throughput_tpm": 294.2,
+      "p50_latencia_s": 1.462,
+      "p95_latencia_s": 1.604,
+      "throughput_tpm": 310.2,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.26,
+      "tiempo_total_s": 3.09,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 4,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
@@ -253,16 +253,16 @@
       "pedidos_exitosos": 40,
       "pedidos_bot_totales": 10,
       "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 22.15,
+      "latencia_bot_avg_ms": 24.18,
       "distribucion_codigos": {
         "401": 10,
         "200": 40
       },
-      "p50_latencia_s": 4.523,
-      "p95_latencia_s": 8.056,
-      "throughput_tpm": 295.6,
+      "p50_latencia_s": 4.361,
+      "p95_latencia_s": 7.766,
+      "throughput_tpm": 307.8,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.12,
+      "tiempo_total_s": 7.8,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 35,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
@@ -275,16 +275,16 @@
       "pedidos_exitosos": 12,
       "pedidos_bot_totales": 3,
       "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.01,
+      "latencia_bot_avg_ms": 1.08,
       "distribucion_codigos": {
         "200": 12,
         "401": 3
       },
-      "p50_latencia_s": 0.692,
-      "p95_latencia_s": 0.706,
-      "throughput_tpm": 86.6,
+      "p50_latencia_s": 0.686,
+      "p95_latencia_s": 0.698,
+      "throughput_tpm": 87.4,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.31,
+      "tiempo_total_s": 8.23,
       "workers_activos_medidos": 1,
       "tareas_encoladas_medidas": 0,
       "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.69 s)"
@@ -297,16 +297,16 @@
       "pedidos_exitosos": 16,
       "pedidos_bot_totales": 4,
       "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 6.36,
+      "latencia_bot_avg_ms": 7.14,
       "distribucion_codigos": {
         "401": 4,
         "200": 16
       },
-      "p50_latencia_s": 1.576,
-      "p95_latencia_s": 1.672,
-      "throughput_tpm": 286.7,
+      "p50_latencia_s": 1.533,
+      "p95_latencia_s": 1.652,
+      "throughput_tpm": 299.0,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.35,
+      "tiempo_total_s": 3.21,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 4,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
@@ -319,16 +319,16 @@
       "pedidos_exitosos": 40,
       "pedidos_bot_totales": 10,
       "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 28.96,
+      "latencia_bot_avg_ms": 24.42,
       "distribucion_codigos": {
         "401": 10,
         "200": 40
       },
-      "p50_latencia_s": 4.509,
-      "p95_latencia_s": 8.096,
-      "throughput_tpm": 295.0,
+      "p50_latencia_s": 4.356,
+      "p95_latencia_s": 7.794,
+      "throughput_tpm": 306.7,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.14,
+      "tiempo_total_s": 7.83,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 35,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
@@ -341,19 +341,19 @@
       "pedidos_exitosos": 12,
       "pedidos_bot_totales": 3,
       "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.07,
+      "latencia_bot_avg_ms": 1.01,
       "distribucion_codigos": {
         "200": 12,
         "401": 3
       },
-      "p50_latencia_s": 0.703,
-      "p95_latencia_s": 0.721,
-      "throughput_tpm": 85.0,
+      "p50_latencia_s": 0.692,
+      "p95_latencia_s": 0.702,
+      "throughput_tpm": 88.5,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.47,
+      "tiempo_total_s": 8.14,
       "workers_activos_medidos": 1,
       "tareas_encoladas_medidas": 0,
-      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.7 s)"
+      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.69 s)"
     },
     {
       "v1_archivos": 10,
@@ -363,14 +363,146 @@
       "pedidos_exitosos": 16,
       "pedidos_bot_totales": 4,
       "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 6.69,
+      "latencia_bot_avg_ms": 7.55,
       "distribucion_codigos": {
         "401": 4,
         "200": 16
       },
-      "p50_latencia_s": 1.543,
-      "p95_latencia_s": 1.719,
-      "throughput_tpm": 291.2,
+      "p50_latencia_s": 1.519,
+      "p95_latencia_s": 1.647,
+      "throughput_tpm": 301.2,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 3.19,
+      "workers_activos_medidos": 4,
+      "tareas_encoladas_medidas": 4,
+      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 1,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 40,
+      "pedidos_bot_totales": 10,
+      "pedidos_bot_rechazados": 10,
+      "latencia_bot_avg_ms": 25.61,
+      "distribucion_codigos": {
+        "401": 10,
+        "200": 40
+      },
+      "p50_latencia_s": 4.378,
+      "p95_latencia_s": 7.871,
+      "throughput_tpm": 303.7,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 7.9,
+      "workers_activos_medidos": 4,
+      "tareas_encoladas_medidas": 35,
+      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 3,
+      "v3_concurrencia": 1,
+      "total_pedidos": 15,
+      "pedidos_exitosos": 12,
+      "pedidos_bot_totales": 3,
+      "pedidos_bot_rechazados": 3,
+      "latencia_bot_avg_ms": 0.99,
+      "distribucion_codigos": {
+        "200": 12,
+        "401": 3
+      },
+      "p50_latencia_s": 0.697,
+      "p95_latencia_s": 0.71,
+      "throughput_tpm": 85.9,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 8.39,
+      "workers_activos_medidos": 1,
+      "tareas_encoladas_medidas": 0,
+      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.7 s)"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 3,
+      "v3_concurrencia": 10,
+      "total_pedidos": 20,
+      "pedidos_exitosos": 16,
+      "pedidos_bot_totales": 4,
+      "pedidos_bot_rechazados": 4,
+      "latencia_bot_avg_ms": 8.03,
+      "distribucion_codigos": {
+        "401": 4,
+        "200": 16
+      },
+      "p50_latencia_s": 1.54,
+      "p95_latencia_s": 1.65,
+      "throughput_tpm": 294.4,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 3.26,
+      "workers_activos_medidos": 4,
+      "tareas_encoladas_medidas": 4,
+      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 3,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 40,
+      "pedidos_bot_totales": 10,
+      "pedidos_bot_rechazados": 10,
+      "latencia_bot_avg_ms": 25.93,
+      "distribucion_codigos": {
+        "401": 10,
+        "200": 40
+      },
+      "p50_latencia_s": 4.511,
+      "p95_latencia_s": 8.175,
+      "throughput_tpm": 292.3,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 8.21,
+      "workers_activos_medidos": 4,
+      "tareas_encoladas_medidas": 35,
+      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 5,
+      "v3_concurrencia": 1,
+      "total_pedidos": 15,
+      "pedidos_exitosos": 12,
+      "pedidos_bot_totales": 3,
+      "pedidos_bot_rechazados": 3,
+      "latencia_bot_avg_ms": 1.04,
+      "distribucion_codigos": {
+        "200": 12,
+        "401": 3
+      },
+      "p50_latencia_s": 0.755,
+      "p95_latencia_s": 0.952,
+      "throughput_tpm": 76.4,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 9.42,
+      "workers_activos_medidos": 1,
+      "tareas_encoladas_medidas": 0,
+      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.75 s)"
+    },
+    {
+      "v1_archivos": 10,
+      "v2_acciones": 5,
+      "v3_concurrencia": 10,
+      "total_pedidos": 20,
+      "pedidos_exitosos": 16,
+      "pedidos_bot_totales": 4,
+      "pedidos_bot_rechazados": 4,
+      "latencia_bot_avg_ms": 7.13,
+      "distribucion_codigos": {
+        "401": 4,
+        "200": 16
+      },
+      "p50_latencia_s": 1.563,
+      "p95_latencia_s": 1.705,
+      "throughput_tpm": 291.0,
       "tasa_error_pct": 0.0,
       "tiempo_total_s": 3.3,
       "workers_activos_medidos": 4,
@@ -379,181 +511,49 @@
     },
     {
       "v1_archivos": 10,
-      "v2_acciones": 1,
+      "v2_acciones": 5,
       "v3_concurrencia": 50,
       "total_pedidos": 50,
       "pedidos_exitosos": 40,
       "pedidos_bot_totales": 10,
       "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 49.6,
+      "latencia_bot_avg_ms": 24.19,
       "distribucion_codigos": {
         "401": 10,
         "200": 40
       },
-      "p50_latencia_s": 4.536,
-      "p95_latencia_s": 8.18,
-      "throughput_tpm": 290.6,
+      "p50_latencia_s": 4.462,
+      "p95_latencia_s": 8.046,
+      "throughput_tpm": 297.2,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.26,
+      "tiempo_total_s": 8.08,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 35,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
     },
     {
-      "v1_archivos": 10,
-      "v2_acciones": 3,
+      "v1_archivos": 100,
+      "v2_acciones": 1,
       "v3_concurrencia": 1,
       "total_pedidos": 15,
       "pedidos_exitosos": 12,
       "pedidos_bot_totales": 3,
       "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.14,
+      "latencia_bot_avg_ms": 1.17,
       "distribucion_codigos": {
         "200": 12,
         "401": 3
       },
-      "p50_latencia_s": 0.72,
-      "p95_latencia_s": 0.735,
-      "throughput_tpm": 83.4,
+      "p50_latencia_s": 0.719,
+      "p95_latencia_s": 0.814,
+      "throughput_tpm": 82.2,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.63,
+      "tiempo_total_s": 8.75,
       "workers_activos_medidos": 1,
       "tareas_encoladas_medidas": 0,
       "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.72 s)"
     },
     {
-      "v1_archivos": 10,
-      "v2_acciones": 3,
-      "v3_concurrencia": 10,
-      "total_pedidos": 20,
-      "pedidos_exitosos": 16,
-      "pedidos_bot_totales": 4,
-      "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 8.83,
-      "distribucion_codigos": {
-        "401": 4,
-        "200": 16
-      },
-      "p50_latencia_s": 1.608,
-      "p95_latencia_s": 1.782,
-      "throughput_tpm": 280.1,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.43,
-      "workers_activos_medidos": 4,
-      "tareas_encoladas_medidas": 4,
-      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
-    },
-    {
-      "v1_archivos": 10,
-      "v2_acciones": 3,
-      "v3_concurrencia": 50,
-      "total_pedidos": 50,
-      "pedidos_exitosos": 40,
-      "pedidos_bot_totales": 10,
-      "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 27.66,
-      "distribucion_codigos": {
-        "401": 10,
-        "200": 40
-      },
-      "p50_latencia_s": 4.613,
-      "p95_latencia_s": 8.341,
-      "throughput_tpm": 286.5,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.38,
-      "workers_activos_medidos": 4,
-      "tareas_encoladas_medidas": 35,
-      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
-    },
-    {
-      "v1_archivos": 10,
-      "v2_acciones": 5,
-      "v3_concurrencia": 1,
-      "total_pedidos": 15,
-      "pedidos_exitosos": 12,
-      "pedidos_bot_totales": 3,
-      "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.24,
-      "distribucion_codigos": {
-        "200": 12,
-        "401": 3
-      },
-      "p50_latencia_s": 0.729,
-      "p95_latencia_s": 0.738,
-      "throughput_tpm": 82.2,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.76,
-      "workers_activos_medidos": 1,
-      "tareas_encoladas_medidas": 0,
-      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.73 s)"
-    },
-    {
-      "v1_archivos": 10,
-      "v2_acciones": 5,
-      "v3_concurrencia": 10,
-      "total_pedidos": 20,
-      "pedidos_exitosos": 16,
-      "pedidos_bot_totales": 4,
-      "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 7.26,
-      "distribucion_codigos": {
-        "401": 4,
-        "200": 16
-      },
-      "p50_latencia_s": 1.723,
-      "p95_latencia_s": 1.84,
-      "throughput_tpm": 270.1,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.55,
-      "workers_activos_medidos": 4,
-      "tareas_encoladas_medidas": 4,
-      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
-    },
-    {
-      "v1_archivos": 10,
-      "v2_acciones": 5,
-      "v3_concurrencia": 50,
-      "total_pedidos": 50,
-      "pedidos_exitosos": 40,
-      "pedidos_bot_totales": 10,
-      "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 37.27,
-      "distribucion_codigos": {
-        "401": 10,
-        "200": 40
-      },
-      "p50_latencia_s": 4.797,
-      "p95_latencia_s": 8.547,
-      "throughput_tpm": 279.5,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.59,
-      "workers_activos_medidos": 4,
-      "tareas_encoladas_medidas": 35,
-      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
-    },
-    {
-      "v1_archivos": 100,
-      "v2_acciones": 1,
-      "v3_concurrencia": 1,
-      "total_pedidos": 15,
-      "pedidos_exitosos": 12,
-      "pedidos_bot_totales": 3,
-      "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.37,
-      "distribucion_codigos": {
-        "200": 12,
-        "401": 3
-      },
-      "p50_latencia_s": 0.74,
-      "p95_latencia_s": 0.752,
-      "throughput_tpm": 81.0,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.89,
-      "workers_activos_medidos": 1,
-      "tareas_encoladas_medidas": 0,
-      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.74 s)"
-    },
-    {
       "v1_archivos": 100,
       "v2_acciones": 1,
       "v3_concurrencia": 10,
@@ -561,16 +561,16 @@
       "pedidos_exitosos": 16,
       "pedidos_bot_totales": 4,
       "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 10.21,
+      "latencia_bot_avg_ms": 10.22,
       "distribucion_codigos": {
         "401": 4,
         "200": 16
       },
-      "p50_latencia_s": 1.678,
-      "p95_latencia_s": 1.855,
-      "throughput_tpm": 272.3,
+      "p50_latencia_s": 1.543,
+      "p95_latencia_s": 1.705,
+      "throughput_tpm": 293.1,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.53,
+      "tiempo_total_s": 3.28,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 4,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
@@ -583,16 +583,16 @@
       "pedidos_exitosos": 40,
       "pedidos_bot_totales": 10,
       "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 34.51,
+      "latencia_bot_avg_ms": 27.53,
       "distribucion_codigos": {
         "401": 10,
         "200": 40
       },
-      "p50_latencia_s": 4.729,
-      "p95_latencia_s": 8.56,
-      "throughput_tpm": 279.4,
+      "p50_latencia_s": 4.525,
+      "p95_latencia_s": 8.074,
+      "throughput_tpm": 295.0,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.59,
+      "tiempo_total_s": 8.14,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 35,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
@@ -605,60 +605,60 @@
       "pedidos_exitosos": 12,
       "pedidos_bot_totales": 3,
       "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.32,
+      "latencia_bot_avg_ms": 1.15,
       "distribucion_codigos": {
         "200": 12,
         "401": 3
       },
-      "p50_latencia_s": 0.745,
-      "p95_latencia_s": 0.756,
-      "throughput_tpm": 80.3,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.96,
-      "workers_activos_medidos": 1,
-      "tareas_encoladas_medidas": 0,
-      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.74 s)"
-    },
-    {
-      "v1_archivos": 100,
-      "v2_acciones": 3,
-      "v3_concurrencia": 10,
-      "total_pedidos": 20,
-      "pedidos_exitosos": 16,
-      "pedidos_bot_totales": 4,
-      "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 10.96,
-      "distribucion_codigos": {
-        "401": 4,
-        "200": 16
-      },
-      "p50_latencia_s": 1.669,
-      "p95_latencia_s": 1.852,
-      "throughput_tpm": 271.4,
-      "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.54,
-      "workers_activos_medidos": 4,
-      "tareas_encoladas_medidas": 4,
-      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
-    },
-    {
-      "v1_archivos": 100,
-      "v2_acciones": 3,
-      "v3_concurrencia": 50,
-      "total_pedidos": 50,
-      "pedidos_exitosos": 40,
-      "pedidos_bot_totales": 10,
-      "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 29.91,
-      "distribucion_codigos": {
-        "401": 10,
-        "200": 40
-      },
-      "p50_latencia_s": 4.814,
-      "p95_latencia_s": 8.571,
-      "throughput_tpm": 277.5,
+      "p50_latencia_s": 0.72,
+      "p95_latencia_s": 0.745,
+      "throughput_tpm": 83.2,
       "tasa_error_pct": 0.0,
       "tiempo_total_s": 8.65,
+      "workers_activos_medidos": 1,
+      "tareas_encoladas_medidas": 0,
+      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.72 s)"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 3,
+      "v3_concurrencia": 10,
+      "total_pedidos": 20,
+      "pedidos_exitosos": 16,
+      "pedidos_bot_totales": 4,
+      "pedidos_bot_rechazados": 4,
+      "latencia_bot_avg_ms": 21.32,
+      "distribucion_codigos": {
+        "401": 4,
+        "200": 16
+      },
+      "p50_latencia_s": 1.59,
+      "p95_latencia_s": 1.755,
+      "throughput_tpm": 285.4,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 3.36,
+      "workers_activos_medidos": 4,
+      "tareas_encoladas_medidas": 4,
+      "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
+    },
+    {
+      "v1_archivos": 100,
+      "v2_acciones": 3,
+      "v3_concurrencia": 50,
+      "total_pedidos": 50,
+      "pedidos_exitosos": 40,
+      "pedidos_bot_totales": 10,
+      "pedidos_bot_rechazados": 10,
+      "latencia_bot_avg_ms": 25.18,
+      "distribucion_codigos": {
+        "401": 10,
+        "200": 40
+      },
+      "p50_latencia_s": 4.512,
+      "p95_latencia_s": 8.106,
+      "throughput_tpm": 293.9,
+      "tasa_error_pct": 0.0,
+      "tiempo_total_s": 8.17,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 35,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"
@@ -671,19 +671,19 @@
       "pedidos_exitosos": 12,
       "pedidos_bot_totales": 3,
       "pedidos_bot_rechazados": 3,
-      "latencia_bot_avg_ms": 1.95,
+      "latencia_bot_avg_ms": 0.98,
       "distribucion_codigos": {
         "200": 12,
         "401": 3
       },
-      "p50_latencia_s": 0.755,
-      "p95_latencia_s": 0.772,
-      "throughput_tpm": 79.5,
+      "p50_latencia_s": 0.722,
+      "p95_latencia_s": 0.742,
+      "throughput_tpm": 82.8,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 9.06,
+      "tiempo_total_s": 8.7,
       "workers_activos_medidos": 1,
       "tareas_encoladas_medidas": 0,
-      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.75 s)"
+      "observaciones": "Sin contenci\u00f3n (/health: m\u00e1x 1/4 worker activo, 0 encoladas). Cuello de botella: ciclo de vida contenedor (~0.72 s)"
     },
     {
       "v1_archivos": 100,
@@ -693,16 +693,16 @@
       "pedidos_exitosos": 16,
       "pedidos_bot_totales": 4,
       "pedidos_bot_rechazados": 4,
-      "latencia_bot_avg_ms": 12.06,
+      "latencia_bot_avg_ms": 9.11,
       "distribucion_codigos": {
         "401": 4,
         "200": 16
       },
-      "p50_latencia_s": 1.624,
-      "p95_latencia_s": 1.825,
-      "throughput_tpm": 272.9,
+      "p50_latencia_s": 1.567,
+      "p95_latencia_s": 1.785,
+      "throughput_tpm": 285.1,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 3.52,
+      "tiempo_total_s": 3.37,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 4,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 4 tareas encoladas en Min-Heap"
@@ -715,16 +715,16 @@
       "pedidos_exitosos": 40,
       "pedidos_bot_totales": 10,
       "pedidos_bot_rechazados": 10,
-      "latencia_bot_avg_ms": 31.07,
+      "latencia_bot_avg_ms": 26.45,
       "distribucion_codigos": {
         "401": 10,
         "200": 40
       },
-      "p50_latencia_s": 4.795,
-      "p95_latencia_s": 8.535,
-      "throughput_tpm": 277.9,
+      "p50_latencia_s": 4.562,
+      "p95_latencia_s": 8.168,
+      "throughput_tpm": 291.5,
       "tasa_error_pct": 0.0,
-      "tiempo_total_s": 8.64,
+      "tiempo_total_s": 8.23,
       "workers_activos_medidos": 4,
       "tareas_encoladas_medidas": 35,
       "observaciones": "Medido en /health: saturaci\u00f3n de pool (4/4 workers activos) y pico de 35 tareas encoladas en Min-Heap"

@@ -13,6 +13,10 @@ set -euo pipefail
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
 HIT="${1:-hit1}"
 PUERTO="${TP2_PUERTO:-18090}"
+# Autenticación (R4): secreto efímero para los JWT y un token de usuario para los pedidos.
+TP2_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export TP2_JWT_SECRET
+TP2_TOKEN="$(python3 "$RAIZ/evidencias/emitir_token.py" --usuario ana --rol usuario --horas 2)"
 URL="http://127.0.0.1:$PUERTO"
 REPO="cerberusdistribuido/tarea"
 ENTORNO="$(mktemp)"
@@ -54,6 +58,7 @@ cat > "$ENTORNO" <<FIN
 DOCKER_GID=$(stat -c %g /var/run/docker.sock)
 TP2_IMAGENES_PERMITIDAS=$PERMITIDAS
 TP2_PUERTO=$PUERTO
+TP2_JWT_SECRET=$TP2_JWT_SECRET
 TP2_REGISTRY_USUARIO=$USUARIO
 TP2_REGISTRY_TOKEN=$TOKEN
 FIN
@@ -64,7 +69,7 @@ caso() {  # $1 = descripción, $2 = imagen
     cuerpo="$(python3 -I -c 'import json, sys
 print(json.dumps({"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": sys.argv[1]}))' "$2")"
     medicion="$(curl -s -o "$RESPUESTA" -w '%{http_code} %{time_total}' -X POST "$URL/getRemoteTask" \
-        -H 'Content-Type: application/json' -d "$cuerpo")"
+        -H "Authorization: Bearer $TP2_TOKEN" -H 'Content-Type: application/json' -d "$cuerpo")"
     python3 -I - "$1" "$2" $medicion "$RESPUESTA" <<'PY'
 import json, re, sys
 caso, imagen, codigo, tiempo, ruta = sys.argv[1:]

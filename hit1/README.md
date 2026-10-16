@@ -24,13 +24,17 @@ cp .env.example .env
 #   TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea
 #   TP2_REGISTRY_USUARIO=cerberusdistribuido
 #   TP2_REGISTRY_TOKEN=<token de Docker Hub de sólo lectura>   (la imagen es privada)
+#   TP2_JWT_SECRET=<mínimo 32 caracteres: python3 -c 'import secrets; print(secrets.token_urlsafe(48))'>
 docker compose up --build -d --wait
 curl -s localhost:8080/health
 ```
 
-Mandar una tarea con el cliente (la primera vez el servidor baja la imagen de Docker Hub):
+Para mandar una tarea hace falta un token (ver [Autenticación](#autenticación-por-request-roles-y-stats-r4)). Con el cliente
+(la primera vez el servidor baja la imagen de Docker Hub):
 
 ```bash
+export TP2_JWT_SECRET=...    # el mismo del .env
+export TP2_TOKEN=$(python3 ../evidencias/emitir_token.py --usuario ana --rol usuario)
 python3 cliente/cliente.py suma '{"a": 3, "b": 4}' --imagen cerberusdistribuido/tarea:1.0.0
 python3 cliente/cliente.py division '{"a": 1, "b": 0}' --imagen cerberusdistribuido/tarea:1.0.0   # 422
 # Otro servidor: --servidor http://host:8080 (o la variable TP2_SERVIDOR). Datos adicionales: --datos '{...}'
@@ -40,7 +44,7 @@ O con `curl`:
 
 ```bash
 curl -s -X POST localhost:8080/getRemoteTask \
-  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TP2_TOKEN" -H 'Content-Type: application/json' \
   -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0.0"}'
 ```
 
@@ -148,7 +152,7 @@ $ docker pull cerberusdistribuido/tarea:1.0.0
 docker.io/cerberusdistribuido/tarea:1.0.0
 
 # El mismo pull, hecho por el servidor (imagen borrada del host). Sin token:
-$ curl -s -X POST localhost:18090/getRemoteTask -H 'Content-Type: application/json' -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0.0"}'
+$ curl -s -X POST localhost:18090/getRemoteTask -H "Authorization: Bearer $TP2_TOKEN" -H 'Content-Type: application/json' -d '{"calculo": "suma", "parametros": {"a": 3, "b": 4}, "imagen": "cerberusdistribuido/tarea:1.0.0"}'
 {"codigo":422,"contenido":{"error":{"tipo":"IMAGEN_INEXISTENTE","mensaje":"la imagen docker.io/cerberusdistribuido/tarea:1.0.0 no existe o no es accesible","detalles":[]}}}
 INFO | descargando docker.io/cerberusdistribuido/tarea:1.0.0 (autenticado: no)
 # Con el token en el secreto del servidor, el mismo curl:
@@ -209,6 +213,24 @@ la tarea fijada a su digest y una imagen que no es servicio tarea). No quedó ni
 - **SDK de Docker y no el CLI:** le habla directo al socket, así la imagen no trae el binario de
   `docker`.
 
+## Autenticación por request, roles y /stats (R4)
+
+El servidor no guarda sesión: cada pedido trae su identidad y su rol en un **JWT** (HS256) en
+`Authorization: Bearer <token>` (`sub` = usuario, `role` = `usuario` o `admin`, `exp` = vencimiento
+obligatorio), y se valida en cada llamada, antes de leer el cuerpo.
+
+| Ruta | Sin token | Rol `usuario` | Rol `admin` |
+|---|---|---|---|
+| `GET /health` | 200 (pública) | 200 | 200 |
+| `POST /getRemoteTask` | 401 | ejecuta la tarea | ejecuta la tarea |
+| `GET /stats` | 401 | 403 | 200 |
+
+- **401 `NO_AUTORIZADO`**: falta el token, no es un JWT, está firmado con otro secreto, no tiene `exp` o venció. **403 `ROL_INSUFICIENTE`**: el token es válido pero el rol no alcanza. **429 `DEMASIADOS_PEDIDOS`**: más de `TP2_LIMITE_PEDIDOS_MIN` pedidos por minuto (300 por defecto; 0 lo apaga) de un mismo usuario, con `Retry-After`.
+- **Fail-closed**: si `TP2_JWT_SECRET` falta o tiene menos de 32 caracteres, el servidor no arranca. El secreto llega al contenedor como archivo (`/run/secrets/jwt_secret`) y no se versiona.
+- **Emitir tokens**: `TP2_JWT_SECRET=... python3 evidencias/emitir_token.py --usuario ana --rol usuario` (sólo librería estándar; `--rol admin`, `--horas`, `--segundos -5` para uno vencido).
+- **`GET /stats`** (admin): tareas ejecutadas y fallidas, tareas por imagen, latencia promedio y p95 (últimas 1000 tareas), tareas en cola (siempre 0: acá no hay cola), workers ocupados (las tareas en curso) y pedidos por código HTTP. Todo en memoria: se reinicia con el servidor. El detalle de cada campo está en la [sección 8 del Hit 2](../hit2/README.md#8-autenticación-por-request-roles-y-stats-r4).
+- **Evidencia**: `evidencias/r4_autenticacion.sh hit1` levanta el servidor con un secreto efímero y prueba con `curl` sin token → 401, usuario en `/stats` → 403, admin en `/stats` → 200, token inválido o vencido → 401 y el 429.
+
 ## Despliegue
 
 Público en **http://18.231.127.74:8081/health**, en la misma VM de AWS EC2 que el TP1 (que sigue en
@@ -239,7 +261,8 @@ Instalarlo en una VM Ubuntu con Docker:
 scp -i clave.pem hit1/despliegue/instalar_vm.sh hit1/docker-compose.yml ubuntu@<IP>:
 ssh -i clave.pem ubuntu@<IP>
 # en la VM: crear ~/.env como el .env.example, con TP2_PUERTO=8081 y
-#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit1:latest; después:
+#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit1:latest y TP2_JWT_SECRET=<32+ caracteres>
+#   (sin el secreto el servidor no arranca); después:
 sudo bash instalar_vm.sh && rm ~/.env
 ```
 
@@ -248,4 +271,5 @@ sudo bash instalar_vm.sh && rm ~/.env
 Variables de entorno (las principales están en [`.env.example`](.env.example)):
 `TP2_IMAGENES_PERMITIDAS`, `TP2_TIMEOUT_EJECUCION` (60 s), `TP2_TIMEOUT_ARRANQUE` (30 s),
 `TP2_TAREA_PUERTO` (8080), `TP2_RED_TAREAS` (`tp2-tareas`), `TP2_REGISTRY_USUARIO`,
-`TP2_REGISTRY_TOKEN_ARCHIVO`, `TP2_DIR_LOGS`.
+`TP2_REGISTRY_TOKEN_ARCHIVO`, `TP2_DIR_LOGS`, `TP2_JWT_SECRET` (obligatorio, mínimo 32 caracteres; o `TP2_JWT_SECRET_ARCHIVO`),
+`TP2_LIMITE_PEDIDOS_MIN` (300 por usuario; 0 = sin límite).

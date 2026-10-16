@@ -233,3 +233,19 @@ def test_iniciar_limpia_huerfanos_y_convoca_eleccion():
         assert lanzador.huerfanos_limpiados
     finally:
         nodo.detener()
+
+
+# ---------------------------------------------------------------- /stats del cluster (R4)
+def test_estadisticas_de_los_pares_junta_lo_que_contestan_y_marca_los_que_no():
+    http = Http({"http://nodo2/cluster/stats": sobre(200, {"estadisticas": {"ejecutadas": 2}, "tareas_en_curso": 1})})
+    nodo, _ = _nodo(http=http)
+    contestaron, sin_respuesta = nodo.estadisticas_de_los_pares()
+    assert contestaron == {2: {"estadisticas": {"ejecutadas": 2}, "tareas_en_curso": 1}}
+    assert sin_respuesta == [3]          # el nodo 3 no tiene respuesta configurada: no contesta
+
+
+def test_estadisticas_de_los_pares_sin_pares():
+    config = Config(nodo_id=1)
+    nodo = Nodo(config, logger_silencioso(), LanzadorFalso(), http=Http())
+    assert nodo.estadisticas_de_los_pares() == ({}, [])
+

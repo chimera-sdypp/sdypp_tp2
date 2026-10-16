@@ -50,3 +50,17 @@ def test_lee_el_id_los_pares_y_los_tiempos():
 def test_pares_mal_formados_no_arrancan(pares):
     with pytest.raises(ValueError):
         Config.desde_entorno({"TP2_NODO_ID": "1", "TP2_PARES": pares})
+
+
+def test_el_secreto_jwt_se_lee_de_un_archivo_o_de_la_variable(tmp_path):
+    archivo = tmp_path / "jwt"
+    archivo.write_text("desde-el-archivo\n", encoding="utf-8")
+    assert Config.desde_entorno({"TP2_JWT_SECRET_ARCHIVO": str(archivo)}).jwt_secreto == "desde-el-archivo"
+    assert Config.desde_entorno({"TP2_JWT_SECRET": " de-la-variable "}).jwt_secreto == "de-la-variable"
+    assert Config.desde_entorno({}).jwt_secreto == ""   # vacío: el servidor no arranca (test_api)
+
+
+def test_el_limite_por_usuario_tiene_default_y_se_puede_apagar():
+    assert Config.desde_entorno({}).limite_pedidos_min == 300
+    assert Config.desde_entorno({"TP2_LIMITE_PEDIDOS_MIN": "0"}).limite_pedidos_min == 0
+    assert Config.desde_entorno({"TP2_LIMITE_PEDIDOS_MIN": "5"}).limite_pedidos_min == 5
