@@ -11,6 +11,7 @@ services:
       TP2_WORKERS_MAX: ${TP2_WORKERS_MAX:-4}
       TP2_TIMEOUT_EJECUCION: ${TP2_TIMEOUT_EJECUCION:-60}
       TP2_REGISTRY_USUARIO: ${TP2_REGISTRY_USUARIO:-}
+      TP2_API_TOKEN: ${TP2_API_TOKEN:-}
 
       # El token llega como archivo (secret) y no como variable: no aparece en `docker inspect`.
       TP2_REGISTRY_TOKEN_ARCHIVO: /run/secrets/registry_token

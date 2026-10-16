@@ -249,7 +249,48 @@ Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo c�
 
 ---
 
-## 8. Despliegue
+## 8. Tareas Diversas y Matriz de Parámetros (R5)
+
+Para evaluar el comportamiento del sistema bajo cargas heterogéneas, se desarrollaron **3 imágenes de tareas especializadas**:
+1. **CPU-bound (`cerberusdistribuido/tarea:cpu-1.0.0`)**: cálculo intensivo de primos (hasta 1.000.000) y Proof-of-Work SHA-256 (`hit2/tareas/cpu/`).
+2. **Procesamiento de Archivos (`cerberusdistribuido/tarea:archivos-1.0.0`)**: ingestión de hasta 200 archivos aplicando un pipeline de hasta 5 acciones (`hit2/tareas/archivos/`).
+3. **Fallas y Timeouts (`cerberusdistribuido/tarea:falla-1.0.0`)**: inyección de excepciones 500, timeouts controlados y validación de parámetros (`hit2/tareas/falla/`).
+
+### 8.1 Resumen de Rendimiento de la Matriz $V_1 \times V_2 \times V_3$
+
+La matriz combinatoria completa de 27 celdas se encuentra documentada en detalle en el informe dedicado:
+👉 **[Ver Informe Completo de Evidencia R5 (R5_INFORME.md)](../evidencias/R5_INFORME.md)**
+
+Diseño experimental y variables:
+- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo (~140 B cada uno), cumpliendo la cuota máxima de 64 KiB por cuerpo HTTP. La latencia total está gobernada por el ciclo de vida del contenedor Docker (~0.58 s base), que enmascara los milisegundos de cómputo en memoria.
+- **$V_2$ (Acciones en pipeline)**: `1`, `3`, `5`. El valor 5 ($N=5$) agota la totalidad de las operaciones implementadas en el servicio tarea (`hash_sha256`, `comprimir`, `contar_palabras`, `rotar_lineas`, `analisis_frecuencia`), evaluando la profundidad máxima del pipeline.
+- **$V_3$ (Concurrencia)**: `1`, `10`, `50` clientes simultáneos con fase de calentamiento previa y repeticiones suficientes para calcular percentiles p50/p95 estadísticamente estables.
+- **Medición empírica de cuellos de botella**: Sondeo continuo de `/health` durante cada corrida para registrar los valores reales de `workers_activos` y `tareas_encoladas`.
+
+A continuación se resumen los regímenes observados con el pool de `TP2_WORKERS_MAX = 4`:
+
+| Régimen de Concurrencia | Clientes ($V_3$) | Latencia p50 Típica | Latencia p95 Típica | Diagnóstico Empírico del Cuello de Botella (Medido en `/health`) |
+|---|---|---|---|---|
+| **Baja / Secuencial** | 1 | ~0.58 – 1.14 s | ~0.60 – 1.42 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero |
+| **Media** | 10 | ~1.47 – 6.00 s | ~3.10 – 6.96 s | `/health`: 4/4 workers activos (100% saturación pool) y tareas retenidas en Min-Heap de Lamport |
+| **Alta** | 50 | ~6.45 – 15.54 s | ~15.50 – 25.91 s | `/health`: 4/4 workers activos continuos, contención en socket de Docker y cola Min-Heap |
+
+### 8.2 Autenticación en Middleware y Rechazo de Bots (R5)
+- **Rechazo estricto:** 100% de las solicitudes emitidas por bots (sin token o con token inválido) son rechazadas con HTTP `401 NO_AUTORIZADO`.
+- **Intercepción perimetral en middleware:** La validación se ejecuta en el `@app.middleware("http")` de FastAPI, rechazando peticiones antes de acceder a la cola con exclusión mutua o instanciar contenedores.
+- **Múltiples usuarios:** El servidor soporta múltiples tokens concurrentes (`TP2_API_TOKEN` con valores separados por comas), simulando identidades legítimas diferenciadas.
+- **Alcance R4 vs R5:** Hit 2 implementa esta intercepción perimetral para aislar bots y medir la contención en R5; la autenticación con roles diferenciados, expiración de tokens, política fail-closed por defecto y `/stats` pertenece a la especificación de R4.
+
+Para reproducir la evaluación completa:
+```bash
+./evidencias/r5_matriz_parametros.sh hit2
+# O contra el servidor público desplegado:
+# TP2_SERVIDOR="http://18.231.127.74:8082" ./evidencias/r5_matriz_parametros.sh
+```
+
+---
+
+## 9. Despliegue
 
 Público en **http://18.231.127.74:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
 

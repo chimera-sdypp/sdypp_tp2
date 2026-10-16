@@ -4,6 +4,8 @@ Se levanta con `uvicorn --factory app.main:crear_app`. La fábrica recibe la
 configuración, el lanzador, el reloj de Lamport y el pool de workers.
 """
 
+import secrets
+
 import time
 
 from fastapi import FastAPI, Request
@@ -30,6 +32,27 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
         log.warning("TP2_IMAGENES_PERMITIDAS está vacía: se va a rechazar toda tarea")
 
     app = FastAPI(title="TP2 · Hit 2 · Servidor con Pool de Workers y Relojes de Lamport", redirect_slashes=False)
+
+    @app.middleware("http")
+    async def autenticacion(request: Request, call_next):
+        """Intercepción perimetral en middleware: valida tokens antes de encolar o despachar tareas."""
+        if config.api_token and request.url.path == "/getRemoteTask":
+            auth_header = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+            api_header = request.headers.get("x-api-token") or request.headers.get("X-API-Token") or ""
+            token_recibido = ""
+            if auth_header.startswith("Bearer "):
+                token_recibido = auth_header[7:].strip()
+            elif api_header:
+                token_recibido = api_header.strip()
+
+            tokens_validos = [t.strip() for t in config.api_token.split(",") if t.strip()]
+            if not token_recibido or not any(secrets.compare_digest(token_recibido, tok) for tok in tokens_validos):
+                ts_salida = reloj.incrementar()
+                res = responder_error(ErrorApi(TipoError.NO_AUTORIZADO, "token de autenticación faltante o inválido"))
+                res.headers["X-Lamport-Clock"] = str(ts_salida)
+                return res
+
+        return await call_next(request)
 
     @app.middleware("http")
     async def bitacora(request: Request, call_next):
