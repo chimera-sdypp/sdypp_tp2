@@ -6,6 +6,7 @@ configuración, el lanzador, el reloj de Lamport y el pool de workers.
 
 import math
 import time
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
@@ -144,6 +145,8 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
 
     @app.post("/getRemoteTask")
     async def getRemoteTask(request: Request):  # noqa: N802 (nombre del enunciado)
+        inicio_total = time.perf_counter()
+        task_id = str(uuid.uuid4())
         cuerpo = await request.body()
         if len(cuerpo) > config.max_cuerpo:
             raise ErrorApi(TipoError.CUERPO_DEMASIADO_GRANDE,
@@ -153,12 +156,12 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
         imagen = await _validar_imagen(solicitud.imagen)
 
         ts_solicitud = request.state.ts_cliente
-        log.info("tarea | %s | calculo=%s | lamport_ts=%d", imagen.referencia, solicitud.calculo, ts_solicitud)
+        log.info("tarea | %s | %s | calculo=%s | lamport_ts=%d", task_id, imagen.referencia, solicitud.calculo, ts_solicitud)
 
         # Encolar en el pool de workers (con exclusión mutua y ordenamiento Lamport)
         inicio_tarea = time.perf_counter()
         try:
-            resultado = await run_in_threadpool(
+            ejecucion, en_cola_s = await run_in_threadpool(
                 pool.ejecutar_tarea,
                 imagen,
                 solicitud.calculo,
@@ -176,7 +179,14 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             200,
             {
                 "calculo": solicitud.calculo,
-                "resultado": resultado,
+                "resultado": ejecucion.resultado,
+                "task_id": task_id,
+                "imagen": imagen.referencia,
+                "digest": ejecucion.digest,
+                "imagen_id": ejecucion.imagen_id,
+                "contenedor": ejecucion.contenedor,
+                "tiempos": {"en_cola_s": en_cola_s, "ejecucion_s": ejecucion.ejecucion_s,
+                            "total_s": round(time.perf_counter() - inicio_total, 4)},
                 "lamport_ts": ts_respuesta
             },
             cabeceras={"X-Lamport-Clock": str(ts_respuesta)}

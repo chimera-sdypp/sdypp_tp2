@@ -8,6 +8,7 @@ no-es-tarea (una imagen que termina enseguida) y tarea-fijada con un digest que 
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -46,8 +47,9 @@ def test_health():
 
 
 def test_caso_feliz():
-    assert tarea("suma", {"a": 3, "b": 4}) == (200, {"codigo": 200, "contenido": {"calculo": "suma",
-                                                                                 "resultado": 7}})
+    codigo, cuerpo = tarea("suma", {"a": 3, "b": 4})
+    assert codigo == 200, cuerpo
+    assert (cuerpo["contenido"]["calculo"], cuerpo["contenido"]["resultado"]) == ("suma", 7)
 
 
 @pytest.mark.parametrize("calculo, parametros, codigo, tipo", [
@@ -126,3 +128,18 @@ def test_stats_cuenta_lo_que_se_ejecuto():
     assert any(imagen.endswith("tarea-prueba:test") for imagen in stats["tareas_por_imagen"])
     assert stats["latencia_s"]["p95"] is not None
     assert (stats["workers_ocupados"], stats["tareas_en_cola"]) == (0, 0)
+
+
+def test_la_respuesta_trae_la_metadata_de_la_ejecucion():
+    codigo, cuerpo = tarea("suma", {"a": 3, "b": 4})
+    contenido = cuerpo["contenido"]
+    assert codigo == 200 and contenido["resultado"] == 7
+    assert re.fullmatch(r"[0-9a-f-]{36}", contenido["task_id"])
+    assert contenido["imagen"] == "docker.io/" + IMAGEN
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["imagen_id"])
+    # Una imagen construida en el host puede no tener digest de registry (depende del almacén de Docker).
+    assert contenido["digest"] is None or re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["digest"])
+    assert re.fullmatch(r"[0-9a-f]{12}", contenido["contenedor"])
+    tiempos = contenido["tiempos"]
+    assert 0 <= tiempos["en_cola_s"] <= tiempos["total_s"] and 0 < tiempos["ejecucion_s"] <= tiempos["total_s"]
+

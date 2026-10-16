@@ -9,6 +9,7 @@ Van en orden: los de caídas dejan el cluster como estaba.
 
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -271,4 +272,19 @@ def test_stats_junta_los_tres_nodos_sin_importar_cual_atienda():
     assert totales == {(antes["tareas_ejecutadas"] + 6, antes["tareas_fallidas"] + 1)}
     assert sum(n["tareas_ejecutadas"] for n in stats["nodos"].values()) == stats["tareas_ejecutadas"]
     assert stats["latencia_s"]["p95"] is not None
+
+
+def test_la_respuesta_trae_la_metadata_de_la_ejecucion():
+    codigo, cuerpo = tarea("suma", {"a": 3, "b": 4})
+    contenido = cuerpo["contenido"]
+    assert codigo == 200 and contenido["resultado"] == 7
+    assert re.fullmatch(r"[0-9a-f-]{36}", contenido["task_id"])
+    assert contenido["imagen"] == "docker.io/" + IMAGEN
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["imagen_id"])
+    # Una imagen construida en el host puede no tener digest de registry (depende del almacén de Docker).
+    assert contenido["digest"] is None or re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["digest"])
+    assert re.fullmatch(r"[0-9a-f]{12}", contenido["contenedor"])
+    tiempos = contenido["tiempos"]
+    assert 0 <= tiempos["en_cola_s"] <= tiempos["total_s"] and 0 < tiempos["ejecucion_s"] <= tiempos["total_s"]
+    assert contenido["nodo"] in (1, 2, 3)
 

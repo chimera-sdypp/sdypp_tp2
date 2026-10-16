@@ -7,6 +7,7 @@ Cada test afirma el **código** y el **sobre**, no sólo que "contestó".
 
 import logging
 import time
+import uuid
 from contextlib import ExitStack
 
 import jwt
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 from app.config import Config
 from app.errores import ErrorApi, TipoError
 from app.main import crear_app
+from dobles import ejecucion
 
 SECRETO = "secreto-de-prueba-de-al-menos-32-caracteres"
 VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "datos": {}, "imagen": "cerberusdistribuido/tarea:1.0"}
@@ -39,7 +41,7 @@ class LanzadorFalso:
         self.llamadas.append((imagen.referencia, calculo, parametros, datos))
         if self.error:
             raise self.error
-        return self.resultado
+        return ejecucion(self.resultado)
 
     def disponible(self):
         return self._disponible
@@ -103,7 +105,8 @@ def _post(cliente, cuerpo=None, **kwargs):
 # ---------------------------------------------------------------- caso feliz
 def test_ejecuta_la_tarea_y_devuelve_el_resultado(armar):
     cliente, lanzador = armar()
-    assert _sobre(_post(cliente, VALIDO), 200) == {"calculo": "suma", "resultado": 7, "nodo": 1}
+    contenido = _sobre(_post(cliente, VALIDO), 200)
+    assert (contenido["calculo"], contenido["resultado"], contenido["nodo"]) == ("suma", 7, 1)
     # La imagen llega normalizada y el trabajo, tal cual.
     assert lanzador.llamadas == [("docker.io/cerberusdistribuido/tarea:1.0", "suma", {"a": 3, "b": 4}, {})]
 
@@ -112,6 +115,29 @@ def test_datos_es_opcional(armar):
     cliente, lanzador = armar()
     _sobre(_post(cliente, {k: v for k, v in VALIDO.items() if k != "datos"}), 200)
     assert lanzador.llamadas[0][3] == {}
+
+
+def test_la_respuesta_trae_la_metadata_de_la_ejecucion(armar):
+    cliente, _ = armar()
+    contenido = _sobre(_post(cliente, VALIDO), 200)
+    assert contenido.keys() == {"calculo", "resultado", "task_id", "imagen", "digest", "imagen_id", "contenedor",
+                                "tiempos", "nodo"}
+    assert uuid.UUID(contenido["task_id"]).version == 4
+    assert contenido["imagen"] == "docker.io/cerberusdistribuido/tarea:1.0"
+    assert contenido["digest"] == "sha256:" + "b" * 64
+    assert contenido["imagen_id"] == "sha256:" + "a" * 64
+    assert contenido["contenedor"] == "c0ffee123456"
+    tiempos = contenido["tiempos"]
+    assert tiempos.keys() == {"en_cola_s", "ejecucion_s", "total_s"}
+    assert tiempos["ejecucion_s"] == 0.01
+    assert contenido["nodo"] == 1
+    assert 0 <= tiempos["en_cola_s"] <= tiempos["total_s"]    # la ejecución es la del doble: no se compara
+
+
+def test_cada_tarea_tiene_su_task_id(armar):
+    cliente, _ = armar()
+    ids = {_sobre(_post(cliente, VALIDO), 200)["task_id"] for _ in range(3)}
+    assert len(ids) == 3
 
 
 # ---------------------------------------------------------------- errores del cliente
@@ -307,7 +333,9 @@ def test_mensajes_del_cluster_mal_formados_son_422(armar, ruta, cuerpo):
 
 def test_ejecutar_corre_local_con_las_mismas_validaciones(armar):
     cliente, lanzador = armar()
-    assert _sobre(cliente.post("/cluster/ejecutar", json=VALIDO), 200) == {"resultado": 7, "nodo": 1}
+    assert _sobre(cliente.post("/cluster/ejecutar", json=VALIDO), 200) == {
+        "resultado": 7, "contenedor": "c0ffee123456", "imagen_id": "sha256:" + "a" * 64,
+        "digest": "sha256:" + "b" * 64, "ejecucion_s": 0.01, "nodo": 1}
     _sobre(cliente.post("/cluster/ejecutar", json={**VALIDO, "imagen": "alguien/minero:1.0"}), 403,
            "IMAGEN_NO_PERMITIDA")
     assert len(lanzador.llamadas) == 1

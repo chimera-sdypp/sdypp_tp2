@@ -5,6 +5,7 @@ Cada test afirma el **código** y el **sobre**, no sólo que "contestó".
 
 import logging
 import time
+import uuid
 
 import jwt
 import pytest
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.config import Config
 from app.errores import ErrorApi, TipoError
 from app.main import crear_app
+from dobles import ejecucion
 
 SECRETO = "secreto-de-prueba-de-al-menos-32-caracteres"
 VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "datos": {}, "imagen": "cerberusdistribuido/tarea:1.0"}
@@ -36,7 +38,7 @@ class LanzadorFalso:
         self.llamadas.append((imagen.referencia, calculo, parametros, datos))
         if self.error:
             raise self.error
-        return self.resultado
+        return ejecucion(self.resultado)
 
     def disponible(self):
         return self._disponible
@@ -121,7 +123,7 @@ def test_la_cola_recibe_el_timestamp_del_cliente(tmp_path):
 
         def ejecutar_tarea(self, imagen, calculo, parametros, datos, lamport_ts=0):
             recibidos.append(lamport_ts)
-            return 7
+            return ejecucion(7), 0.0
 
     config = Config(dir_logs=str(tmp_path), imagenes_permitidas=("cerberusdistribuido/tarea",), jwt_secreto=SECRETO)
     cliente = TestClient(crear_app(config, LanzadorFalso(), pool=PoolFalso()), headers=con(token()))
@@ -134,6 +136,28 @@ def test_datos_es_opcional(armar):
     cliente, lanzador = armar()
     _sobre(_post(cliente, {k: v for k, v in VALIDO.items() if k != "datos"}), 200)
     assert lanzador.llamadas[0][3] == {}
+
+
+def test_la_respuesta_trae_la_metadata_de_la_ejecucion(armar):
+    cliente, _ = armar()
+    contenido = _sobre(_post(cliente, VALIDO), 200)
+    assert contenido.keys() == {"calculo", "resultado", "task_id", "imagen", "digest", "imagen_id", "contenedor",
+                                "tiempos", "lamport_ts"}
+    assert uuid.UUID(contenido["task_id"]).version == 4
+    assert contenido["imagen"] == "docker.io/cerberusdistribuido/tarea:1.0"
+    assert contenido["digest"] == "sha256:" + "b" * 64
+    assert contenido["imagen_id"] == "sha256:" + "a" * 64
+    assert contenido["contenedor"] == "c0ffee123456"
+    tiempos = contenido["tiempos"]
+    assert tiempos.keys() == {"en_cola_s", "ejecucion_s", "total_s"}
+    assert tiempos["ejecucion_s"] == 0.01
+    assert 0 <= tiempos["en_cola_s"] <= tiempos["total_s"]    # la ejecución es la del doble: no se compara
+
+
+def test_cada_tarea_tiene_su_task_id(armar):
+    cliente, _ = armar()
+    ids = {_sobre(_post(cliente, VALIDO), 200)["task_id"] for _ in range(3)}
+    assert len(ids) == 3
 
 
 # ---------------------------------------------------------------- errores del cliente

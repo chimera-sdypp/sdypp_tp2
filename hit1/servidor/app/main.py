@@ -8,6 +8,7 @@ necesitan Docker.
 import math
 import threading
 import time
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
@@ -143,6 +144,8 @@ def crear_app(config=None, lanzador=None):
 
     @app.post("/getRemoteTask")
     async def getRemoteTask(request: Request):  # noqa: N802 (nombre del enunciado)
+        inicio_total = time.perf_counter()
+        task_id = str(uuid.uuid4())
         cuerpo = await request.body()
         if len(cuerpo) > config.max_cuerpo:
             raise ErrorApi(TipoError.CUERPO_DEMASIADO_GRANDE,
@@ -150,18 +153,29 @@ def crear_app(config=None, lanzador=None):
         solicitud = validar_solicitud(cuerpo, request.headers.get("content-type"))
         imagen = await _validar_imagen(solicitud.imagen)
 
-        log.info("tarea | %s | calculo=%s", imagen.referencia, solicitud.calculo)
+        log.info("tarea | %s | %s | calculo=%s", task_id, imagen.referencia, solicitud.calculo)
         # En un hilo: el servidor sigue atendiendo pedidos mientras corre la tarea.
         inicio_tarea = time.perf_counter()
         try:
             with en_curso:
-                resultado = await run_in_threadpool(lanzador.ejecutarTareaRemota, imagen, solicitud.calculo,
+                ejecucion = await run_in_threadpool(lanzador.ejecutarTareaRemota, imagen, solicitud.calculo,
                                                     solicitud.parametros, solicitud.datos)
         except Exception:
             estadisticas.registrar_tarea(imagen.referencia, False, time.perf_counter() - inicio_tarea)
             raise
         estadisticas.registrar_tarea(imagen.referencia, True, time.perf_counter() - inicio_tarea)
-        return responder(200, {"calculo": solicitud.calculo, "resultado": resultado})
+        return responder(200, {
+            "calculo": solicitud.calculo,
+            "resultado": ejecucion.resultado,
+            "task_id": task_id,
+            "imagen": imagen.referencia,
+            "digest": ejecucion.digest,
+            "imagen_id": ejecucion.imagen_id,
+            "contenedor": ejecucion.contenedor,
+            # Sin cola: cada pedido corre ya, en su propio hilo.
+            "tiempos": {"en_cola_s": 0.0, "ejecucion_s": ejecucion.ejecucion_s,
+                        "total_s": round(time.perf_counter() - inicio_total, 4)},
+        })
 
     @app.get("/stats")
     def stats():

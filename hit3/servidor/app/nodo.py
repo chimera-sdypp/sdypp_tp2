@@ -12,11 +12,19 @@ Cada nodo cumple tres papeles a la vez:
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple
 
 from app.bully import Bully
 from app.cluster import RegistroNodos
 from app.errores import ErrorApi, TipoError
-from app.lanzador import SinConexion, Vencido, http_json
+from app.lanzador import Ejecucion, SinConexion, Vencido, http_json
+
+
+class Despacho(NamedTuple):
+    """Lo que devuelve `Nodo.ejecutar()`: la ejecución, en qué nodo y cuánto esperó la asignación."""
+    ejecucion: Ejecucion
+    nodo: int
+    asignacion_s: float
 
 
 class _EjecutorCaido(Exception):
@@ -123,18 +131,22 @@ class Nodo:
 
     # ---------------------------------------------------------------- entrada
     def ejecutar(self, imagen, calculo, parametros, datos):
-        """Corre la tarea en el nodo que asigne el coordinador → (resultado, nodo).
+        """Corre la tarea en el nodo que asigne el coordinador → `Despacho`.
 
         Si el ejecutor se cae a mitad de camino, se pide otra asignación sin él:
         así se redistribuyen las tareas de un nodo caído. Se puede re-ejecutar
         porque las tareas son cálculos sin efectos secundarios."""
         excluidos = set()
+        asignacion_s = 0.0
         while True:
+            inicio = time.perf_counter()
             nodo = self._pedir_asignacion(excluidos)
+            asignacion_s += time.perf_counter() - inicio
             if nodo == self.mi_id:
-                return self.ejecutar_local(imagen, calculo, parametros, datos), nodo
+                return Despacho(self.ejecutar_local(imagen, calculo, parametros, datos), nodo, round(asignacion_s, 4))
             try:
-                return self._ejecutar_en(nodo, imagen, calculo, parametros, datos), nodo
+                return Despacho(self._ejecutar_en(nodo, imagen, calculo, parametros, datos), nodo,
+                                round(asignacion_s, 4))
             except _EjecutorCaido as error:
                 self._log.warning("cluster | se cayó el nodo %d con la tarea en curso (%s): se reasigna",
                                   nodo, error)
@@ -189,7 +201,8 @@ class Nodo:
         # El ejecutor contesta con el sobre de siempre: el error se devuelve tal cual.
         contenido = respuesta.get("contenido") if isinstance(respuesta, dict) else None
         if estado == 200 and isinstance(contenido, dict) and "resultado" in contenido:
-            return contenido["resultado"]
+            return Ejecucion(contenido["resultado"], contenido.get("contenedor"), contenido.get("imagen_id"),
+                             contenido.get("digest"), contenido.get("ejecucion_s"))
         error = contenido.get("error") if isinstance(contenido, dict) else None
         if isinstance(error, dict) and error.get("tipo") in TipoError.__members__:
             raise ErrorApi(TipoError[error["tipo"]], error.get("mensaje") or "", error.get("detalles"),

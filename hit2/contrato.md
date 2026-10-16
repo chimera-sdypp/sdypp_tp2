@@ -7,7 +7,7 @@ Define qué recibe y qué devuelve el servidor en el Hit #2. Extiende el contrat
 Toda respuesta es JSON y mantiene el mismo sobre que en Hit #1, incorporando además el timestamp de Lamport del servidor tanto en la cabecera HTTP `X-Lamport-Clock` como en la clave `lamport_ts` dentro del `contenido`:
 
 ```json
-{"codigo": 200, "contenido": {"calculo": "suma", "resultado": 7, "lamport_ts": 5}}
+{"codigo": 200, "contenido": {"calculo": "suma", "resultado": 7, "task_id": "ae3eb90e-…", "imagen": "docker.io/cerberusdistribuido/tarea:1.0.0", "digest": "sha256:…", "imagen_id": "sha256:…", "contenedor": "8fd786f5c50b", "tiempos": {"en_cola_s": 0.0001, "ejecucion_s": 0.3432, "total_s": 0.4634}, "lamport_ts": 5}}
 {"codigo": 403, "contenido": {"error": {"tipo": "IMAGEN_NO_PERMITIDA", "mensaje": "…", "detalles": []}}}
 ```
 
@@ -30,12 +30,20 @@ Toda respuesta es JSON y mantiene el mismo sobre que en Hit #1, incorporando ade
 |---|---|
 | `POST /getRemoteTask` | Encola la tarea en el **Pool de Workers (con exclusión mutua)**. Cuando hay un worker libre, ejecuta el contenedor efímero y devuelve el resultado |
 | `GET /health` | Estado público del servidor, Docker y el Pool de Workers |
+| `GET /stats` | Estadísticas (sólo rol `admin`): tareas ejecutadas y fallidas, por imagen, latencia promedio y p95, cola y workers, pedidos por código |
 
 ### `POST /getRemoteTask`
 
 Cabeceras obligatorias:
+- `Authorization: Bearer <JWT>` (R4)
 - `Content-Type: application/json`
 - `X-Lamport-Clock: <entero>` (opcional, por defecto `0`)
+
+**Autenticación (R4):** todo pedido salvo `GET /health` lleva un JWT HS256 (`sub`, `role`, `exp`) que se valida en cada llamada.
+`usuario` ejecuta tareas; `admin` además ve `/stats`. Sin token o con uno inválido o vencido → `401 NO_AUTORIZADO`; rol insuficiente →
+`403 ROL_INSUFICIENTE`; más de `TP2_LIMITE_PEDIDOS_MIN` pedidos por minuto de un usuario → `429 DEMASIADOS_PEDIDOS` con `Retry-After`.
+Los campos de la respuesta (`task_id`, `imagen`, `digest`, `imagen_id`, `contenedor`, `tiempos`: `en_cola_s` es la espera en la cola del pool),
+la tabla completa de errores y "lo que falta" están en el [contrato público](../contrato-publico.md).
 
 ```json
 {

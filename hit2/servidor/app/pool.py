@@ -8,6 +8,7 @@ las tareas según su timestamp de Lamport.
 import heapq
 import itertools
 import threading
+import time
 from concurrent.futures import Future
 
 
@@ -20,6 +21,8 @@ class TareaEncolada:
         self.orden_llegada = orden_llegada
         self.ejecutor_fn = ejecutor_fn
         self.futuro = futuro
+        self.encolada_en = time.perf_counter()
+        self.en_cola_s = 0.0
 
     def __lt__(self, otro: "TareaEncolada") -> bool:
         # Menor timestamp de Lamport se atiende primero.
@@ -52,7 +55,8 @@ class PoolWorkers:
             return len(self._cola)
 
     def ejecutar_tarea(self, imagen, calculo, parametros, datos, lamport_ts: int = 0):
-        """Encola la tarea bajo exclusión mutua y espera a que un worker disponible la ejecute."""
+        """Encola la tarea bajo exclusión mutua y espera a que un worker disponible la ejecute
+        → (lo que devolvió el lanzador, segundos que esperó en la cola)."""
         futuro = Future()
         with self._mutex:
             orden = next(self._contador_llegada)
@@ -76,6 +80,7 @@ class PoolWorkers:
         """Asigna tareas a workers libres. Debe invocarse con self._mutex adquirido."""
         while self._cola and self._workers_activos < self.workers_max:
             tarea = heapq.heappop(self._cola)
+            tarea.en_cola_s = round(time.perf_counter() - tarea.encolada_en, 4)
             self._workers_activos += 1
             if self.log:
                 self.log.info("pool | despachando %s | ts_lamport=%d | activos=%d/%d",
@@ -86,7 +91,7 @@ class PoolWorkers:
         """Ejecuta la tarea en un contenedor Docker y libera el worker al finalizar."""
         try:
             resultado = tarea.ejecutor_fn()
-            tarea.futuro.set_result(resultado)
+            tarea.futuro.set_result((resultado, tarea.en_cola_s))
         except Exception as exc:
             tarea.futuro.set_exception(exc)
         finally:

@@ -82,3 +82,28 @@ def test_pool_ordenamiento_lamport():
 
     # La primera fue 'inicial', luego debió ejecutarse 'alta_prio' (ts=2) antes que 'baja_prio' (ts=50)
     assert orden_ejecucion == ["inicial", "alta_prio", "baja_prio"]
+
+
+def test_pool_informa_cuanto_espero_en_la_cola():
+    lanzador_mock = MagicMock()
+
+    def _ejecutar(imagen, calculo, parametros, datos):
+        time.sleep(0.2)
+        return "ok"
+
+    lanzador_mock.ejecutarTareaRemota.side_effect = _ejecutar
+    pool = PoolWorkers(lanzador_mock, workers_max=1)
+    resultados = []
+    hilos = [threading.Thread(target=lambda ts=ts: resultados.append(pool.ejecutar_tarea("img", "x", {}, {}, ts)))
+             for ts in (1, 2)]
+    hilos[0].start()
+    time.sleep(0.05)       # que la primera ocupe al único worker
+    hilos[1].start()
+    for h in hilos:
+        h.join()
+
+    esperas = sorted(en_cola for _, en_cola in resultados)
+    assert all(valor == "ok" for valor, _ in resultados)
+    assert esperas[0] < 0.05          # la primera no esperó
+    assert 0.1 < esperas[1] < 0.3     # la segunda esperó a que terminara la primera
+

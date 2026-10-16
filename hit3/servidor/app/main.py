@@ -12,6 +12,7 @@ no necesitan Docker.
 import json
 import math
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -163,18 +164,34 @@ def crear_app(config=None, lanzador=None, nodo=None):
 
     @app.post("/getRemoteTask")
     async def getRemoteTask(request: Request):  # noqa: N802 (nombre del enunciado)
+        inicio_total = time.perf_counter()
+        task_id = str(uuid.uuid4())
         solicitud, imagen = await _solicitud(request)
-        log.info("tarea | %s | calculo=%s", imagen.referencia, solicitud.calculo)
+        log.info("tarea | %s | %s | calculo=%s", task_id, imagen.referencia, solicitud.calculo)
         # En un hilo: el servidor sigue atendiendo pedidos mientras corre la tarea.
         inicio_tarea = time.perf_counter()
         try:
-            resultado, ejecutor = await run_in_threadpool(nodo.ejecutar, imagen, solicitud.calculo,
-                                                          solicitud.parametros, solicitud.datos)
+            despacho = await run_in_threadpool(nodo.ejecutar, imagen, solicitud.calculo,
+                                               solicitud.parametros, solicitud.datos)
         except Exception:
             estadisticas.registrar_tarea(imagen.referencia, False, time.perf_counter() - inicio_tarea)
             raise
         estadisticas.registrar_tarea(imagen.referencia, True, time.perf_counter() - inicio_tarea)
-        return responder(200, {"calculo": solicitud.calculo, "resultado": resultado, "nodo": ejecutor})
+        ejecucion = despacho.ejecucion
+        return responder(200, {
+            "calculo": solicitud.calculo,
+            "resultado": ejecucion.resultado,
+            "task_id": task_id,
+            "imagen": imagen.referencia,
+            "digest": ejecucion.digest,
+            "imagen_id": ejecucion.imagen_id,
+            "nodo": despacho.nodo,
+            "contenedor": ejecucion.contenedor,
+            # "En cola" es la espera de la asignación: lo que tardó el coordinador en elegir nodo
+            # (más, si hubo que elegir coordinador o reasignar la tarea). Cada nodo ejecuta enseguida.
+            "tiempos": {"en_cola_s": despacho.asignacion_s, "ejecucion_s": ejecucion.ejecucion_s,
+                        "total_s": round(time.perf_counter() - inicio_total, 4)},
+        })
 
     @app.get("/stats")
     async def stats():
@@ -255,8 +272,8 @@ def crear_app(config=None, lanzador=None, nodo=None):
         solicitud, imagen = await _solicitud(request)
         log.info("tarea | ejecuta en el nodo %d | %s | calculo=%s", nodo.mi_id, imagen.referencia,
                  solicitud.calculo)
-        resultado = await run_in_threadpool(nodo.ejecutar_local, imagen, solicitud.calculo,
+        ejecucion = await run_in_threadpool(nodo.ejecutar_local, imagen, solicitud.calculo,
                                             solicitud.parametros, solicitud.datos)
-        return responder(200, {"resultado": resultado, "nodo": nodo.mi_id})
+        return responder(200, {**ejecucion._asdict(), "nodo": nodo.mi_id})
 
     return app

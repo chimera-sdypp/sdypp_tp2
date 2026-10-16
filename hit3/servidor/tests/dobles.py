@@ -4,6 +4,8 @@ import logging
 
 from docker.errors import APIError, ImageNotFound
 
+from app.lanzador import Ejecucion
+
 
 class RelojFalso:
     def __init__(self):
@@ -40,8 +42,14 @@ class ContenedorFalso:
         self.borrado = True
 
 
+def ejecucion(resultado):
+    """Lo que devuelve `Lanzador.ejecutarTareaRemota()`."""
+    return Ejecucion(resultado, "c0ffee123456", "sha256:" + "a" * 64, "sha256:" + "b" * 64, 0.01)
+
+
 class ImagenFalsa:
     def __init__(self, digests):
+        self.id = "sha256:" + "a" * 64
         self.attrs = {"RepoDigests": [f"cerberusdistribuido/tarea@{d}" for d in digests]}
 
 
