@@ -69,8 +69,7 @@ class Nodo:
             self.bully.latir(self.tareas_en_curso)
 
     def _al_asumir(self):
-        self.registro.reiniciar()
-        self.registro.actualizar(self.mi_id, self.tareas_en_curso)
+        self.registro.asumir_coordinador(self.mi_id, self.tareas_en_curso)
 
     def _al_anunciarse(self, aceptaron):
         """Los que aceptaron el COORDINADOR están vivos: entran al registro ya, sin esperar

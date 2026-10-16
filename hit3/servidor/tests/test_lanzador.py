@@ -208,9 +208,12 @@ class _Handler(BaseHTTPRequestHandler):
         estado, cuerpo = {"/ok": (200, b'{"a": 1}'), "/roto": (200, b"no es json"),
                           "/rechazo": (422, b'{"b": 2}')}.get(self.path, (200, b"{}"))
         self.send_response(estado)
-        self.send_header("Content-Length", str(len(cuerpo)))
-        self.end_headers()
-        self.wfile.write(cuerpo)
+        try:
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.end_headers()
+            self.wfile.write(cuerpo)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def log_message(self, *args):
         pass

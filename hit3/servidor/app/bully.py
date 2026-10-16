@@ -100,12 +100,12 @@ class Bully:
 
     def _proclamarse(self):
         with self._cond:
+            self._al_asumir()
             self._coordinador = self.mi_id
             self._anuncios += 1
             self._cond.notify_all()
         self._log.info("bully | nodo %d es el nuevo COORDINADOR | COORDINADOR → %s", self.mi_id,
                        sorted(self._pares) or "nadie")
-        self._al_asumir()
         self._al_anunciarse(self._mandar_a_todos(self._pares, "/cluster/coordinador"))
 
     def _mandar_a_todos(self, nodos, ruta):

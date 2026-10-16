@@ -209,6 +209,22 @@ def test_al_asumir_anota_a_los_que_aceptaron_el_anuncio():
     assert set(nodo.registro.estado()) == {"1", "2"}
 
 
+def test_adopcion_atomica_no_pierde_heartbeat_en_vuelo():
+    # Cuando el nodo 2 acepta el COORDINADOR, manda inmediatamente un heartbeat con 3 tareas en curso.
+    # El coordinador nuevo no debe borrar ese heartbeat al terminar de proclamarse.
+    def responder_coordinador_y_mandar_heartbeat(metodo, url, cuerpo=None, timeout=5.0):
+        if url == "http://nodo2/cluster/coordinador":
+            nodo.recibir_heartbeat(2, 3)
+            return sobre(200, {"coordinador": 1})
+        raise SinConexion("refused")
+
+    nodo, _ = _nodo(responder_coordinador_y_mandar_heartbeat)
+    nodo.bully._proclamarse()
+    estado = nodo.registro.estado()
+    assert set(estado) == {"1", "2"}
+    assert estado["2"]["tareas_en_curso"] == 3
+
+
 def test_iniciar_limpia_huerfanos_y_convoca_eleccion():
     nodo, lanzador = _nodo(intervalo_heartbeat=0.01)
     nodo.iniciar()
