@@ -87,34 +87,45 @@ def _normalizar_nombre(nombre: str) -> tuple[str, str]:
 def parsear(texto: str) -> Imagen:
     """Convierte un string como `cerberusdistribuido/tarea:1.0.0` en una `Imagen`.
     
-    Reglas contractuales estrictas:
-    - Longitud máxima de 255 caracteres.
-    - Exige una versión fija (tag distinto de `latest`, o digest inmutable).
-    - Rechaza explícitamente `latest`: la misma petición no puede correr código
-      distinto de un día a otro en un entorno distribuido reproducible.
+    Reglas contractuales estrictas (Requisito R2):
+    1. Longitud máxima acotada (evita ataques por saturación de payload).
+    2. Digest criptográfico inmutable verificado por regex SHA-256.
+    3. Separación segura de puerto de registry vs. tag semántico.
+    4. Normalización canónica (agrega 'docker.io' y 'library' si corresponden).
+    5. Rechazo estricto de 'latest': garantiza reproducibilidad determinística.
     """
+    # Paso 1: Protección de longitud máxima (previene ataques de denegación de servicio)
     if len(texto) > LARGO_MAXIMO:
         raise ImagenInvalida(f"supera los {LARGO_MAXIMO} caracteres")
+
+    # Paso 2: Separar y validar el digest criptográfico (@sha256:...) si fue provisto
     nombre, arroba, digest = texto.partition("@")
     if arroba and not _DIGEST.match(digest):
         raise ImagenInvalida("el digest tiene que ser sha256:<64 hex>")
 
+    # Paso 3: Extraer el tag de versión (:tag)
+    # Se usa rpartition para no confundir el puerto del registry (ej: localhost:5000/tarea) con el tag
     tag = None
-    # El ':' del tag es el que viene después de la última '/': el anterior es el
-    # puerto del registry (ej. localhost:5000/tarea).
     base, dos_puntos, posible_tag = nombre.rpartition(":")
     if dos_puntos and "/" not in posible_tag:
         nombre, tag = base, posible_tag
         if not _TAG.match(tag):
             raise ImagenInvalida(f"tag inválido: {tag!r}")
+
+    # Paso 4: Validar presencia de nombre y normalizar componentes OCI
     if not nombre:
         raise ImagenInvalida("falta el nombre de la imagen")
     registry, repositorio = _normalizar_nombre(nombre)
 
+    # Paso 5: Reglas de inmutabilidad y reproducibilidad (Requisito R2)
+    # - No se permite omitir versión (no se asume 'latest' implícito)
     if not tag and not digest:
         raise ImagenInvalida("falta el tag o el digest (no se acepta latest implícito)")
+    # - Rechazo explícito de 'latest': en sistemas distribuidos el código debe ser determinístico
     if tag == "latest":
         raise ImagenInvalida("no se acepta el tag latest: usar una versión fija o un digest")
+
+    # Paso 6: Construcción de la instancia inmutable de dominio
     return Imagen(registry, repositorio, tag, digest or None)
 
 
