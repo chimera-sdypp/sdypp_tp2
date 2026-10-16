@@ -281,18 +281,18 @@ La matriz combinatoria completa de 27 celdas se encuentra documentada en detalle
 👉 **[Ver Informe Completo de Evidencia R5 (R5_INFORME.md)](../evidencias/R5_INFORME.md)**
 
 Diseño experimental y variables:
-- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo (~140 B cada uno), cumpliendo la cuota máxima de 64 KiB por cuerpo HTTP. La latencia total está gobernada por el ciclo de vida del contenedor Docker (~0.58 s base), que enmascara los milisegundos de cómputo en memoria.
+- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo; el cuerpo mide 331 B, 2 KB y 18,7 KB para 1, 10 y 100 archivos (el límite es 64 KiB). La latencia está dominada por el ciclo de vida del contenedor (~0.67 s con un solo cliente): de 1 a 100 archivos el p50 sube sólo de 0.67 a 0.76 s.
 - **$V_2$ (Acciones en pipeline)**: `1`, `3`, `5`. El valor 5 ($N=5$) agota la totalidad de las operaciones implementadas en el servicio tarea (`hash_sha256`, `comprimir`, `contar_palabras`, `rotar_lineas`, `analisis_frecuencia`), evaluando la profundidad máxima del pipeline.
-- **$V_3$ (Concurrencia)**: `1`, `10`, `50` clientes simultáneos con fase de calentamiento previa y repeticiones suficientes para calcular percentiles p50/p95 estadísticamente estables.
+- **$V_3$ (Concurrencia)**: `1`, `10`, `50` clientes simultáneos con calentamiento previo y 15, 20 y 50 pedidos por celda. Son pocas muestras y una sola corrida: sirven para comparar celdas entre sí, no como valores absolutos.
 - **Medición empírica de cuellos de botella**: Sondeo continuo de `/health` durante cada corrida para registrar los valores reales de `workers_activos` y `tareas_encoladas`.
 
-A continuación se resumen los regímenes observados con el pool de `TP2_WORKERS_MAX = 4`:
+Rangos de las 9 celdas de cada $V_3$ en la corrida que está en `mediciones/matriz_r5_resultados.json` (pool de `TP2_WORKERS_MAX = 4`, imágenes construidas en el mismo equipo del benchmark de la sección 4):
 
 | Régimen de Concurrencia | Clientes ($V_3$) | Latencia p50 Típica | Latencia p95 Típica | Diagnóstico Empírico del Cuello de Botella (Medido en `/health`) |
 |---|---|---|---|---|
-| **Baja / Secuencial** | 1 | ~0.58 – 1.14 s | ~0.60 – 1.42 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero |
-| **Media** | 10 | ~1.47 – 6.00 s | ~3.10 – 6.96 s | `/health`: 4/4 workers activos (100% saturación pool) y tareas retenidas en Min-Heap de Lamport |
-| **Alta** | 50 | ~6.45 – 15.54 s | ~15.50 – 25.91 s | `/health`: 4/4 workers activos continuos, contención en socket de Docker y cola Min-Heap |
+| **Baja / Secuencial** | 1 | 0.67 – 0.76 s | 0.68 – 0.77 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero |
+| **Media** | 10 | 1.53 – 1.72 s | 1.67 – 1.86 s | `/health`: 4/4 workers activos y hasta 4 tareas encoladas. Cuello de botella: el número de workers |
+| **Alta** | 50 | 4.51 – 4.81 s | 8.06 – 8.57 s | `/health`: 4/4 workers activos y hasta 35 tareas encoladas. Cuello de botella: el número de workers. Si el daemon de Docker también contribuye no se midió |
 
 ### 8.2 Autenticación en Middleware y Rechazo de Bots (R5)
 - **Rechazo estricto:** 100% de las solicitudes emitidas por bots (sin token o con token inválido) son rechazadas con HTTP `401 NO_AUTORIZADO`.

@@ -630,16 +630,24 @@ def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], sal
     lineas.append("\n---\n")
     lineas.append("## 3. Análisis Técnico y Respuestas a los Puntos de Evaluación\n")
 
-    lineas.append("### 3.1 Transmisión de Contenido Real en $V_1$ vs Overhead de Contenedores")
+    def _celda(v1, v2, v3):
+        return next((m for m in matriz if (m["v1_archivos"], m["v2_acciones"], m["v3_concurrencia"]) == (v1, v2, v3)), None)
+
+    bytes_v1 = {v1: len(json.dumps(armar_payload_matriz(v1, 1))) for v1 in (1, 10, 100)}
+    c_min, c_max = _celda(1, 1, 1), _celda(100, 5, 1)
+    p50_min = c_min["p50_latencia_s"] if c_min else piso_latencia
+    p50_max = c_max["p50_latencia_s"] if c_max else piso_latencia
+
+    lineas.append("### 3.1 Contenido real en $V_1$ vs costo del contenedor")
     lineas.append(
-        "A diferencia de simulaciones puramente sintéticas, en esta batería cada archivo viaja con contenido textual real "
-        "en el cuerpo JSON de la petición HTTP. Para $V_1 = 1$ el payload ronda los ~150 bytes; para $V_1 = 10$, ~1.5 KB; "
-        "y para $V_1 = 100$, ~15 KB. En todos los casos se cumple estrictamente la restricción de diseño de **64 KiB** por cuerpo.\n\n"
-        f"Se observa que entre 1 y 100 archivos la latencia base pasa de ~0.58 s a ~0.95–1.14 s. La variación es moderada "
-        "debido a que en la arquitectura de contenedores efímeros por tarea, **el costo dominante es el ciclo de vida del contenedor Docker** "
-        f"(`containers.create` + `start` + sondeo de `/health` + `remove`), el cual impone un piso físico de **~{piso_latencia:.2f} s**. "
-        "El tiempo de cómputo en memoria de las transformaciones (hashing, compresión zlib y entropía de Shannon) insume "
-        "apenas entre 2 y 15 ms, siendo enmascarado por el tiempo de orquestación de Docker."
+        "Cada archivo viaja con su contenido en el cuerpo JSON de la petición. Tamaño medido del cuerpo con $V_2 = 1$: "
+        f"{bytes_v1[1]} bytes para $V_1 = 1$, {bytes_v1[10]} para $V_1 = 10$ y {bytes_v1[100]} para $V_1 = 100$ "
+        "(el contrato admite hasta 64 KiB).\n\n"
+        f"Con un solo cliente ($V_3 = 1$) la latencia p50 pasa de {p50_min} s ($V_1 = 1$, $V_2 = 1$) a {p50_max} s "
+        f"($V_1 = 100$, $V_2 = 5$). El piso medido, {piso_latencia:.2f} s, es el de crear, arrancar, esperar y borrar el contenedor "
+        "efímero: ese costo domina y el procesamiento de los archivos agrega poco sobre él. Por eso, con $V_3 = 10$ y $V_3 = 50$ "
+        "la latencia depende sobre todo de la cola y casi no de $V_1$ ni de $V_2$. No se midió por separado cuánto tarda la tarea "
+        "dentro del contenedor, así que el reparto exacto entre ambos costos es una inferencia."
     )
 
     lineas.append("\n### 3.2 Justificación de $V_2 = 5$ (Acciones)")
@@ -653,43 +661,48 @@ def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], sal
         "sometiendo al worker a la máxima profundidad de procesamiento por documento."
     )
 
-    lineas.append("\n### 3.3 Rigor Estadístico y Eliminación de Ruido")
+    lineas.append("\n### 3.3 Muestras y calentamiento")
     lineas.append(
-        "Para eliminar las distorsiones observadas en mediciones con muestras aisladas:\n"
-        "1. **Calentamiento**: Se envían solicitudes preliminares previas a la matriz para asegurar que las imágenes Docker "
-        "estén en caché local y los módulos del intérprete compilados.\n"
-        "2. **Tamaño muestral**: Para $V_3 = 1$ se recolectan 15 peticiones por celda; para $V_3 = 10$, 20 peticiones; "
-        "y para $V_3 = 50$, 50 peticiones simultáneas, permitiendo calcular percentiles p50 y p95 representativos "
-        "sin saltos bruscos causados por jitter transitorio."
+        "1. **Calentamiento**: antes de la matriz se envían pedidos preliminares para que la imagen ya esté en el Docker local.\n"
+        "2. **Muestras por celda**: 15 pedidos con $V_3 = 1$, 20 con $V_3 = 10$ y 50 con $V_3 = 50$, de los cuales un 20 % los "
+        "manda un bot (el resto, usuarios con token). Con tan pocas muestras, el p95 es el valor cercano al máximo de la celda y "
+        "una sola corrida no permite medir la variación entre corridas; los números valen para comparar celdas entre sí en una misma "
+        "corrida, no como valores absolutos. Los pedidos de bots no cuentan para p50, p95 ni throughput."
     )
 
-    lineas.append("\n### 3.4 Autenticación en Middleware y Mezcla de Múltiples Usuarios / Bots")
+    def _por_v3(v3):
+        celdas = [m for m in matriz if m["v3_concurrencia"] == v3]
+        return (max((m["workers_activos_medidos"] for m in celdas), default=0),
+                max((m["tareas_encoladas_medidas"] for m in celdas), default=0))
+
+    act1, enc1 = _por_v3(1)
+    act10, enc10 = _por_v3(10)
+    act50, enc50 = _por_v3(50)
+
+    lineas.append("\n### 3.4 Autenticación y bots")
     lineas.append(
-        f"- Total de peticiones emitidas por bots: **{total_pedidos_bot}** (distribuidas en todas las celdas de la matriz).\n"
-        f"- Tasa de intercepción y rechazo (HTTP `401 NO_AUTORIZADO`): **{total_rechazos_bot}/{total_pedidos_bot} ({tasa_rechazo:.1f}%)**.\n"
-        f"- Tiempo medio de intercepción perimetral en middleware: **{lat_media_bot:.2f} ms**.\n"
-        "- **Múltiples usuarios**: Los usuarios legítimos no compartieron un único token; se configuraron y distribuyeron "
-        "múltiples credenciales de usuario diferenciadas (`token_usr_1`, `token_usr_2`, etc.), verificando que el servidor "
-        "soporta un conjunto plural de identidades válidas.\n"
-        "- **Intercepción en Middleware**: La comprobación fue desacoplada del endpoint de negocio e implementada formalmente como un "
-        "`@app.middleware('http')` de FastAPI. Las solicitudes no autorizadas son rechazadas de inmediato sin tocar la cola "
-        "con mutex ni instanciar contenedores en Docker.\n\n"
+        f"- Pedidos emitidos por bots: **{total_pedidos_bot}**, en todas las celdas.\n"
+        f"- Rechazados con `401 NO_AUTORIZADO`: **{total_rechazos_bot}/{total_pedidos_bot} ({tasa_rechazo:.1f}%)**.\n"
+        f"- Latencia media de esos rechazos, medida por el cliente (incluye la red): **{lat_media_bot:.2f} ms**.\n"
+        "- Los usuarios legítimos usan varios tokens distintos (los de `TP2_API_TOKEN`, separados por comas), no uno compartido.\n"
+        "- La comprobación está en un `@app.middleware('http')` de FastAPI: un pedido sin token válido se rechaza antes de "
+        "llegar a la cola y sin crear ningún contenedor.\n\n"
         "> [!NOTE]\n"
-        "> **Alcance de R4 vs R5**: La autenticación en Hit 2 actúa como filtro perimetral para aislar bots y medir "
-        "la cola bajo R5. La arquitectura integral de autenticación (roles diferenciados, revocación y expiración temporal, "
-        "política estricta *fail-closed* por defecto y endpoint `/stats`) corresponde a la especificación de R4."
+        "> **Alcance**: esta autenticación sirve para separar bots y medir la cola de R5. No tiene roles, vencimiento ni `/stats`: "
+        "eso corresponde a R4."
     )
 
-    lineas.append("\n### 3.5 Diagnóstico Empírico de Cuellos de Botella Detectados")
+    lineas.append("\n### 3.5 Cuello de botella medido en `/health`")
     lineas.append(
-        "A través de la telemetría continua sobre `/health` durante las ejecuciones, se constató empíricamente:\n"
-        f"1. **En baja concurrencia ($V_3 = 1$)**: `/health` reporta consistentemente `workers_activos: 1` y `tareas_encoladas: 0`. "
-        f"No existe contención en la cola protegida por mutex. El cuello de botella es la latencia intrínseca del ciclo de vida del contenedor (~{piso_latencia:.2f} s).\n"
-        "2. **En concurrencia media ($V_3 = 10$)**: `/health` registra saturación del pool con `workers_activos: 4` (100% de capacidad) "
-        "y un pico medido de tareas en espera en la Min-Heap de Lamport. El cuello de botella detectado es la capacidad máxima de procesamiento paralelo del pool.\n"
-        "3. **En alta concurrencia ($V_3 = 50$)**: El sondeo de `/health` evidencia que el pool permanece al 100% (4/4 workers) con decenas "
-        "de solicitudes retenidas en la cola ordenada por Lamport. Se detecta además que las operaciones concurrentes sobre el socket "
-        "de Docker (`/var/run/docker.sock`) incrementan el tiempo de creación de contenedores respecto al régimen secuencial."
+        "Durante cada celda un hilo consulta `/health` cada 30 ms y guarda el máximo de `workers_activos` y de `tareas_encoladas`. "
+        "Máximos observados en toda la matriz:\n\n"
+        "| $V_3$ | Workers activos (de 4) | Tareas encoladas |\n|---|---|---|\n"
+        f"| 1 | {act1} | {enc1} |\n| 10 | {act10} | {enc10} |\n| 50 | {act50} | {enc50} |\n\n"
+        f"- Con $V_3 = 1$ no hay cola: el cuello de botella es el ciclo de vida del contenedor (~{piso_latencia:.2f} s por tarea).\n"
+        "- Con $V_3 = 10$ y $V_3 = 50$ el pool llega a su tope y el resto espera en la cola: el cuello de botella es el número de "
+        "workers (`TP2_WORKERS_MAX`). En esas celdas la latencia crece con la cola y el throughput deja de crecer.\n"
+        "- **No medido**: si el daemon de Docker se vuelve un segundo cuello con muchos contenedores a la vez es una hipótesis; "
+        "esta corrida no la verifica."
     )
 
     lineas.append("\n### 3.6 Entorno de Ejecución y Timeout Contractual")
