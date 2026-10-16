@@ -34,11 +34,11 @@ def levantar_servidor(workers):
                    env=entorno, check=True, capture_output=True)
 
 
-def medir(servidor, imagen, tareas):
+def medir(servidor, imagen, tareas, token=""):
     """Manda `tareas` sumas a la vez. Devuelve (segundos totales, exitosas, latencia media)."""
     def una(i):
         inicio = time.perf_counter()
-        respuesta = ClienteHit2(servidor).enviar_tarea("suma", {"a": i, "b": 1}, imagen=imagen, timeout=600)
+        respuesta = ClienteHit2(servidor, token=token).enviar_tarea("suma", {"a": i, "b": 1}, imagen=imagen, timeout=600)
         return respuesta["codigo"] == 200, time.perf_counter() - inicio
 
     inicio = time.perf_counter()
@@ -83,14 +83,15 @@ def main():
     parser.add_argument("--imagen", default="cerberusdistribuido/tarea:1.0.0")
     parser.add_argument("--tareas", type=int, default=32, help="tareas por medición")
     parser.add_argument("--repeticiones", type=int, default=3)
+    parser.add_argument("--token", default=os.environ.get("TP2_API_TOKEN", ""), help="token de autenticación")
     args = parser.parse_args()
 
     filas = []
     for n in WORKERS:
         levantar_servidor(n)
         # Calentamiento: la primera tarea puede incluir el pull de la imagen.
-        ClienteHit2(args.servidor).enviar_tarea("suma", {"a": 0, "b": 0}, imagen=args.imagen, timeout=600)
-        corridas = [medir(args.servidor, args.imagen, args.tareas) for _ in range(args.repeticiones)]
+        ClienteHit2(args.servidor, token=args.token).enviar_tarea("suma", {"a": 0, "b": 0}, imagen=args.imagen, timeout=600)
+        corridas = [medir(args.servidor, args.imagen, args.tareas, token=args.token) for _ in range(args.repeticiones)]
         if any(exitosas != args.tareas for _, exitosas, _ in corridas):
             sys.exit(f"con {n} workers fallaron tareas: {corridas}")
         segundos = [s for s, _, _ in corridas]

@@ -223,11 +223,30 @@ La sección crítica es corta: operaciones sobre la heap y el contador. El conte
 - Cada tarea corre en **su propio contenedor**, que se crea y se borra como en el Hit 1.
 - `TP2_WORKERS_MAX` se lee al arrancar: para cambiarlo hay que reiniciar el servidor, que es lo que hace el benchmark entre una medición y la siguiente.
 
-### Relojes de Lamport
+### Relojes de Lamport y vulnerabilidad de inanición (Starvation)
 
 - El timestamp viaja en la cabecera `X-Lamport-Clock`, en el pedido y en la respuesta (que además lo repite en el cuerpo, `lamport_ts`). No va en el JSON del pedido para no cambiar el payload del Hit 1.
 - El servidor incrementa su reloj **una sola vez por respuesta**: el valor de la cabecera y el del cuerpo son el mismo.
-- **Limitación**: un pedido sin la cabecera entra con timestamp `0` y queda primero en la cola. El orden supone clientes que respetan el protocolo.
+- **Razón del ordenamiento por `ts_cliente`**: La min-heap ordena las tareas por el timestamp de envío del cliente. Si se ordenara por el reloj del servidor al recibir, como ese crece monótonamente con cada llegada, el orden equivaldría a un simple FIFO por tiempo de llegada y el reloj lógico no tendría efecto reordenador ante redes asíncronas con retardos de tránsito variables.
+- **Análisis de seguridad e inanición (Starvation)**:
+  - *Vulnerabilidad detectada*: Un cliente malicioso o defectuoso que envíe deliberadamente `X-Lamport-Clock: 0` (o clientes sin cabecera, que caen a `0` por omisión) se inserta siempre al frente de la min-heap, sobrepasando a clientes legítimos cuyos relojes avanzan monótonamente. Si la tasa de llegada de estos pedidos satura la capacidad de los workers, los pedidos honestos sufren inanición (*starvation*).
+  - *Soluciones para producción / redes no confiables*:
+    1. **Mecanismo de envejecimiento (*Aging*)**: Ajustar dinámicamente la prioridad en la heap en función del tiempo transcurrido en cola ($t_{espera}$), impidiendo que una tarea quede indefinidamente postergada.
+    2. **Timestamp de recepción en servidor**: Ordenar por el reloj del servidor tras la actualización ($L_{servidor} = \max(L_{local}, L_{cliente}) + 1$), garantizando monotonicidad estrictamente controlada por el nodo central.
+    3. **Límites de desviación y cuotas**: Rechazar o penalizar pedidos cuyo timestamp sea marcadamente inferior a una ventana de tolerancia respecto al reloj del servidor.
+
+### Modelo de cola síncrono vs cola desacoplada (202 Accepted)
+
+- **Diseño implementado (*Hold the Connection*)**: El endpoint `POST /tareas` encola la tarea en el `PoolWorkers` y bloquea el hilo HTTP esperando el resultado mediante `futuro.result(timeout=60)`.
+- **Ventajas**:
+  - Mantiene 100% de retrocompatibilidad con el contrato HTTP síncrono del Hit 1.
+  - El cliente realiza una única solicitud HTTP y obtiene directamente el resultado (`200 OK` o error tipificado) sin requerir lógica de polling ni websockets.
+- **Trade-off y limitaciones bajo alta concurrencia**:
+  - En escenarios de saturación (como $V_3 = 50$ en R5), retener la conexión TCP y el socket HTTP abierto mientras la tarea espera turno en la min-heap consume descriptores de archivo, memoria de buffers en el kernel y conexiones activas en el servidor ASGI (Uvicorn). Si el tiempo en cola más la ejecución supera el timeout del cliente (o los 60 s del pool), la conexión se interrumpe por timeout.
+- **Alternativa desacoplada (202 Accepted)**:
+  - Una arquitectura asíncrona desacoplada respondería inmediatamente con HTTP `202 Accepted` y una cabecera `Location: /tareas/{id}` (o un identificador en el cuerpo).
+  - El cliente consultaría periódicamente (`polling`) el estado de su tarea o recibiría la respuesta mediante Server-Sent Events (SSE) o Webhooks.
+  - Esto desacopla el transporte de la ejecución y evita retener sockets HTTP bajo backpressure, a costa de introducir almacenamiento persistente para los estados de las tareas y mayor complejidad en el cliente.
 
 ### Lo demás es el Hit 1
 
