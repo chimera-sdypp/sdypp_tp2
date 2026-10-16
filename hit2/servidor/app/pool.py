@@ -8,7 +8,7 @@ las tareas según su timestamp de Lamport.
 import heapq
 import itertools
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 
 
 class TareaEncolada:
@@ -40,6 +40,7 @@ class PoolWorkers:
         self._cola: list[TareaEncolada] = []
         self._contador_llegada = itertools.count()
         self._workers_activos = 0
+        self._pool_ejecutor = ThreadPoolExecutor(max_workers=self.workers_max, thread_name_prefix="hit2-worker")
 
     @property
     def workers_activos(self) -> int:
@@ -50,6 +51,10 @@ class PoolWorkers:
     def tareas_encoladas(self) -> int:
         with self._mutex:
             return len(self._cola)
+
+    def cerrar(self, esperar: bool = False):
+        """Detiene el pool de workers."""
+        self._pool_ejecutor.shutdown(wait=esperar)
 
     def ejecutar_tarea(self, imagen, calculo, parametros, datos, lamport_ts: int = 0):
         """Encola la tarea bajo exclusión mutua y espera a que un worker disponible la ejecute."""
@@ -80,7 +85,7 @@ class PoolWorkers:
             if self.log:
                 self.log.info("pool | despachando %s | ts_lamport=%d | activos=%d/%d",
                               tarea.id_tarea, tarea.lamport_ts, self._workers_activos, self.workers_max)
-            threading.Thread(target=self._ejecutar_worker, args=(tarea,), daemon=True).start()
+            self._pool_ejecutor.submit(self._ejecutar_worker, tarea)
 
     def _ejecutar_worker(self, tarea: TareaEncolada):
         """Ejecuta la tarea en un contenedor Docker y libera el worker al finalizar."""

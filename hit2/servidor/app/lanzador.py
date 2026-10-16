@@ -68,6 +68,8 @@ class Lanzador:
         self._reloj = reloj
         self._dormir = dormir
         self._cliente = None
+        self._ultimo_ping_t = None
+        self._ultimo_ping_ok = False
 
     def _docker(self):
         """Se conecta recién cuando hace falta: si Docker no está al arrancar, el
@@ -79,10 +81,20 @@ class Lanzador:
                 raise _sin_docker(error) from None
         return self._cliente
 
-    def disponible(self):
+    def disponible(self, ttl: float = 1.0):
+        """Comprueba disponibilidad de Docker. Con ttl > 0 reutiliza el resultado
+        reciente para no saturar el socket Unix bajo alta concurrencia."""
+        ahora = self._reloj()
+        if self._ultimo_ping_t is not None and (ahora - self._ultimo_ping_t) < ttl:
+            return self._ultimo_ping_ok
         try:
-            return bool(self._docker().ping())
+            ok = bool(self._docker().ping())
+            self._ultimo_ping_t = ahora
+            self._ultimo_ping_ok = ok
+            return ok
         except (ErrorApi, *_SIN_DOCKER):
+            self._ultimo_ping_t = ahora
+            self._ultimo_ping_ok = False
             return False
 
     def preparar_imagen(self, imagen):
@@ -99,7 +111,15 @@ class Lanzador:
         try:
             # create + start por separado: si falla el start, `containers.run()`
             # deja el contenedor creado y no habría referencia para borrarlo.
-            contenedor = cliente.containers.create(imagen.referencia, network=self._config.red_tareas)
+            kwargs_crear = {
+                "network": self._config.red_tareas,
+            }
+            if getattr(self._config, "tarea_mem_limit", None):
+                kwargs_crear["mem_limit"] = self._config.tarea_mem_limit
+            if getattr(self._config, "tarea_cpus", None) and self._config.tarea_cpus > 0:
+                kwargs_crear["nano_cpus"] = int(self._config.tarea_cpus * 1_000_000_000)
+
+            contenedor = cliente.containers.create(imagen.referencia, **kwargs_crear)
             contenedor.start()
             base = self._esperar_listo(contenedor)
             return self._enviar(base, calculo, parametros, datos)
