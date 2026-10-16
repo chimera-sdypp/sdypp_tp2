@@ -31,10 +31,18 @@ class Config:
     jwt_secreto: str = ""
     # Pedidos por minuto y por usuario (R4); 0 = sin límite.
     limite_pedidos_min: int = 300
+    api_token: str = ""
+    tarea_mem_limit: str = "256m"
+    tarea_cpus: float = 1.0
 
     @classmethod
     def desde_entorno(cls, entorno=None):
         e = os.environ if entorno is None else entorno
+        mem_limit = e.get("TP2_TAREA_MEM_LIMIT")
+        if mem_limit is None:
+            mem_limit = cls.tarea_mem_limit
+        cpus_env = e.get("TP2_TAREA_CPUS")
+        cpus = float(cpus_env) if cpus_env and cpus_env.strip() else cls.tarea_cpus
         return cls(
             imagenes_permitidas=tuple(
                 i.strip() for i in e.get("TP2_IMAGENES_PERMITIDAS", "").split(",") if i.strip()),
@@ -48,5 +56,8 @@ class Config:
             registry_token=_leer_secreto(e.get("TP2_REGISTRY_TOKEN_ARCHIVO", "")),
             jwt_secreto=_leer_secreto(e.get("TP2_JWT_SECRET_ARCHIVO", "")) or e.get("TP2_JWT_SECRET", "").strip(),
             limite_pedidos_min=int(e.get("TP2_LIMITE_PEDIDOS_MIN") or cls.limite_pedidos_min),
+            api_token=_leer_secreto(e.get("TP2_API_TOKEN_ARCHIVO", "")) or e.get("TP2_API_TOKEN", "").strip(),
+            tarea_mem_limit=mem_limit,
+            tarea_cpus=cpus,
         )
 

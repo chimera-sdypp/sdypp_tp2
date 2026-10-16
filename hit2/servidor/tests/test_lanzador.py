@@ -42,6 +42,8 @@ def test_devuelve_el_resultado_y_borra_el_contenedor():
     [contenedor] = docker_falso.creados
     assert contenedor.imagen == "docker.io/cerberusdistribuido/tarea:1.0"
     assert contenedor.network == "tp2-tareas"
+    assert contenedor.kwargs.get("mem_limit") == "256m"
+    assert contenedor.kwargs.get("nano_cpus") == 1_000_000_000
     assert contenedor.borrado
     assert docker_falso.pulls == []  # ya estaba en el host
     metodo, url, cuerpo, timeout = http.pedidos[-1]

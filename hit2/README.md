@@ -33,6 +33,11 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
 
 ### Componentes Principales
 
+> [!IMPORTANT]
+> **Fundamento de Diseño de la Cola de Tareas**: La razón primordial de incorporar una cola en un sistema distribuido **no es la concurrencia en sí misma, sino desacoplar temporalmente el pedido de la respuesta**. Esto permite que el backend admita peticiones al ritmo que llegan los clientes sin verse forzado a instanciar workers de manera descontrolada o rechazar con `503`. Sobre este canal desacoplado, se aplican secuencialmente:
+> 1. **Ordenamiento causal**: Relojes lógicos de Lamport (Min-Heap) para ordenar tareas según la relación "sucedió antes" (*happened-before*).
+> 2. **Exclusión Mutua**: Mutex (`threading.Lock()`) para proteger las estructuras de datos y la contención de workers.
+
 1. **Reloj Lógico de Lamport (`app/lamport.py`)**:
    - Mantiene un contador interno thread-safe.
    - Aplica el algoritmo de Lamport en cada recepción de solicitud HTTP (`X-Lamport-Clock`):
@@ -40,7 +45,8 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
    - Incrementa el reloj al enviar las respuestas.
 
 2. **Pool de Workers y Cola Protegida (`app/pool.py`)**:
-   - **Límite máximo configurable**: definido por `TP2_WORKERS_MAX` (por defecto `4`).
+   - **Límite máximo configurable**: definido por `TP2_WORKERS_MAX` (por defecto `4`). Gestionado mediante un `ThreadPoolExecutor` para evitar agotamiento de threads a nivel sistema operativo.
+   - **Límites de recursos Docker**: Cada tarea efímera se crea con límites estrictos de hardware (`mem_limit="256m"` y `nano_cpus=1_000_000_000`), evitando que la máquina se quede sin RAM y CPU al correr múltiples workers en el mismo host.
    - **Exclusión Mutua**: Toda operación sobre la cola (`encolar`, `despachar`, `liberar worker`) requiere la adquisición de un **Mutex interno** (`threading.Lock()`), garantizando cero condiciones de carrera (*race conditions*).
    - **Ordenamiento lógico**: La cola utiliza una min-heap donde las tareas se ordenan por el timestamp de Lamport **del cliente** (`X-Lamport-Clock` del pedido, el del evento de envío). Ante igualdad de timestamp, se aplica FIFO. Si se ordenara por el reloj del servidor al recibir, como ese crece con cada llegada, el orden sería el de llegada y el reloj no aportaría nada.
 
@@ -338,18 +344,20 @@ La matriz combinatoria completa de 27 celdas se encuentra documentada en detalle
 👉 **[Ver Informe Completo de Evidencia R5 (R5_INFORME.md)](../evidencias/R5_INFORME.md)**
 
 Diseño experimental y variables:
-- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo; el cuerpo mide 331 B, 2 KB y 18,7 KB para 1, 10 y 100 archivos (el límite es 64 KiB). La latencia está dominada por el ciclo de vida del contenedor (~0.66 s con un solo cliente): de 1 a 100 archivos el p50 sube sólo de 0.656 a 0.722 s.
+- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo; el cuerpo mide 331 B, 2 KB y 18,7 KB para 1, 10 y 100 archivos (el límite es 64 KiB). La latencia está dominada por el ciclo de vida del contenedor (~0.89 s con un solo cliente): de 1 a 100 archivos el p50 varía de 0.89 a 0.93 s.
 - **$V_2$ (Acciones en pipeline)**: `1`, `3`, `5`. El valor 5 ($N=5$) agota la totalidad de las operaciones implementadas en el servicio tarea (`hash_sha256`, `comprimir`, `contar_palabras`, `rotar_lineas`, `analisis_frecuencia`), evaluando la profundidad máxima del pipeline.
 - **$V_3$ (Concurrencia)**: `1`, `10`, `50` clientes simultáneos con calentamiento previo y 15, 20 y 50 pedidos por celda. Son pocas muestras y una sola corrida: sirven para comparar celdas entre sí, no como valores absolutos.
-- **Medición empírica de cuellos de botella**: Sondeo continuo de `/health` durante cada corrida para registrar los valores reales de `workers_activos` y `tareas_encoladas`.
+- **Desacoplamiento temporal de la cola**: La cola admite y confirma las solicitudes desacoplando el ritmo de llegada del cliente del ritmo de procesamiento del pool de workers, permitiendo ordenar por Lamport (Min-Heap) y sincronizar mediante exclusión mutua (Mutex).
+- **Medición empírica de cuellos de botella y monitoreo del Host**: Sondeo continuo de `/health` durante cada corrida para registrar los valores reales de `workers_activos` y `tareas_encoladas`, combinado con muestreo continuo de CPU y RAM del host (`/proc/stat` y `/proc/meminfo`) para certificar que la máquina no sufra saturación encubierta.
+- **Aislamiento y límites Docker**: Cada worker efímero se ejecuta con topes estrictos de hardware (`mem_limit=256m`, `nano_cpus=1_000_000_000`) garantizando que los workers compartan equitativamente la capacidad del equipo.
 
 Rangos de las 9 celdas de cada $V_3$ en la corrida que está en `mediciones/matriz_r5_resultados.json` (pool de `TP2_WORKERS_MAX = 4`, imágenes construidas en el mismo equipo del benchmark de la sección 4):
 
 | Régimen de Concurrencia | Clientes ($V_3$) | Latencia p50 Típica | Latencia p95 Típica | Diagnóstico Empírico del Cuello de Botella (Medido en `/health`) |
 |---|---|---|---|---|
-| **Baja / Secuencial** | 1 | 0.66 – 0.76 s | 0.67 – 0.95 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero |
-| **Media** | 10 | 1.43 – 1.59 s | 1.55 – 1.79 s | `/health`: 4/4 workers activos y hasta 4 tareas encoladas. Cuello de botella: el número de workers |
-| **Alta** | 50 | 4.17 – 4.56 s | 7.53 – 8.18 s | `/health`: 4/4 workers activos y hasta 35 tareas encoladas. Cuello de botella: el número de workers. Si el daemon de Docker también contribuye no se midió |
+| **Baja / Secuencial** | 1 | 0.89 – 1.00 s | 1.02 – 1.97 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero (~0.89 s) |
+| **Media** | 10 | 2.40 – 3.82 s | 7.41 – 8.82 s | `/health`: 4/4 workers activos y hasta 4 tareas encoladas. Cuello de botella: el número de workers |
+| **Alta** | 50 | 13.39 – 16.12 s | 25.03 – 27.34 s | `/health`: 4/4 workers activos y hasta 35 tareas encoladas. Cuello de botella: el número de workers. Host sin saturación de RAM/CPU |
 
 ### 9.2 Bots sin token en la matriz
 - Todas las celdas mezclan 3 usuarios con JWT distintos y un 20 % de pedidos de bots, sin token o con uno inválido. El servidor los rechaza con `401 NO_AUTORIZADO` antes de la cola y sin crear contenedores (ver [la sección 8](#8-autenticación-por-request-roles-y-stats-r4)).
