@@ -33,6 +33,11 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
 
 ### Componentes Principales
 
+> [!IMPORTANT]
+> **Fundamento de Diseño de la Cola de Tareas**: La razón primordial de incorporar una cola en un sistema distribuido **no es la concurrencia en sí misma, sino desacoplar temporalmente el pedido de la respuesta**. Esto permite que el backend admita peticiones al ritmo que llegan los clientes sin verse forzado a instanciar workers de manera descontrolada o rechazar con `503`. Sobre este canal desacoplado, se aplican secuencialmente:
+> 1. **Ordenamiento causal**: Relojes lógicos de Lamport (Min-Heap) para ordenar tareas según la relación "sucedió antes" (*happened-before*).
+> 2. **Exclusión Mutua**: Mutex (`threading.Lock()`) para proteger las estructuras de datos y la contención de workers.
+
 1. **Reloj Lógico de Lamport (`app/lamport.py`)**:
    - Mantiene un contador interno thread-safe.
    - Aplica el algoritmo de Lamport en cada recepción de solicitud HTTP (`X-Lamport-Clock`):
@@ -40,7 +45,8 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
    - Incrementa el reloj al enviar las respuestas.
 
 2. **Pool de Workers y Cola Protegida (`app/pool.py`)**:
-   - **Límite máximo configurable**: definido por `TP2_WORKERS_MAX` (por defecto `4`).
+   - **Límite máximo configurable**: definido por `TP2_WORKERS_MAX` (por defecto `4`). Gestionado mediante un `ThreadPoolExecutor` para evitar agotamiento de threads a nivel sistema operativo.
+   - **Límites de recursos Docker**: Cada tarea efímera se crea con límites estrictos de hardware (`mem_limit="256m"` y `nano_cpus=1_000_000_000`), evitando que la máquina se quede sin RAM y CPU al correr múltiples workers en el mismo host.
    - **Exclusión Mutua**: Toda operación sobre la cola (`encolar`, `despachar`, `liberar worker`) requiere la adquisición de un **Mutex interno** (`threading.Lock()`), garantizando cero condiciones de carrera (*race conditions*).
    - **Ordenamiento lógico**: La cola utiliza una min-heap donde las tareas se ordenan por el timestamp de Lamport **del cliente** (`X-Lamport-Clock` del pedido, el del evento de envío). Ante igualdad de timestamp, se aplica FIFO. Si se ordenara por el reloj del servidor al recibir, como ese crece con cada llegada, el orden sería el de llegada y el reloj no aportaría nada.
 
@@ -63,8 +69,16 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
 ```bash
 cd hit2
 cp .env.example .env
-# Configurar variables en .env (por ejemplo TP2_WORKERS_MAX=4)
+# Completar .env: TP2_WORKERS_MAX=4 y, obligatorio, TP2_JWT_SECRET (mínimo 32 caracteres;
+# sin él el servidor no arranca). Un secreto nuevo: python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 docker compose up --build -d --wait
+```
+
+Para mandar tareas hace falta un token (ver [la sección 8](#8-autenticación-por-request-roles-y-stats-r4)):
+```bash
+export TP2_JWT_SECRET=...   # el mismo del .env
+export TP2_TOKEN=$(python3 ../evidencias/emitir_token.py --usuario ana --rol usuario)
+python3 cliente/cliente.py suma '{"a": 3, "b": 4}'
 ```
 
 ### Paso 2: Verificar Estado (/health)
@@ -223,11 +237,30 @@ La sección crítica es corta: operaciones sobre la heap y el contador. El conte
 - Cada tarea corre en **su propio contenedor**, que se crea y se borra como en el Hit 1.
 - `TP2_WORKERS_MAX` se lee al arrancar: para cambiarlo hay que reiniciar el servidor, que es lo que hace el benchmark entre una medición y la siguiente.
 
-### Relojes de Lamport
+### Relojes de Lamport y vulnerabilidad de inanición (Starvation)
 
 - El timestamp viaja en la cabecera `X-Lamport-Clock`, en el pedido y en la respuesta (que además lo repite en el cuerpo, `lamport_ts`). No va en el JSON del pedido para no cambiar el payload del Hit 1.
 - El servidor incrementa su reloj **una sola vez por respuesta**: el valor de la cabecera y el del cuerpo son el mismo.
-- **Limitación**: un pedido sin la cabecera entra con timestamp `0` y queda primero en la cola. El orden supone clientes que respetan el protocolo.
+- **Razón del ordenamiento por `ts_cliente`**: La min-heap ordena las tareas por el timestamp de envío del cliente. Si se ordenara por el reloj del servidor al recibir, como ese crece monótonamente con cada llegada, el orden equivaldría a un simple FIFO por tiempo de llegada y el reloj lógico no tendría efecto reordenador ante redes asíncronas con retardos de tránsito variables.
+- **Análisis de seguridad e inanición (Starvation)**:
+  - *Vulnerabilidad detectada*: Un cliente malicioso o defectuoso que envíe deliberadamente `X-Lamport-Clock: 0` (o clientes sin cabecera, que caen a `0` por omisión) se inserta siempre al frente de la min-heap, sobrepasando a clientes legítimos cuyos relojes avanzan monótonamente. Si la tasa de llegada de estos pedidos satura la capacidad de los workers, los pedidos honestos sufren inanición (*starvation*).
+  - *Soluciones para producción / redes no confiables*:
+    1. **Mecanismo de envejecimiento (*Aging*)**: Ajustar dinámicamente la prioridad en la heap en función del tiempo transcurrido en cola ($t_{espera}$), impidiendo que una tarea quede indefinidamente postergada.
+    2. **Timestamp de recepción en servidor**: Ordenar por el reloj del servidor tras la actualización ($L_{servidor} = \max(L_{local}, L_{cliente}) + 1$), garantizando monotonicidad estrictamente controlada por el nodo central.
+    3. **Límites de desviación y cuotas**: Rechazar o penalizar pedidos cuyo timestamp sea marcadamente inferior a una ventana de tolerancia respecto al reloj del servidor.
+
+### Modelo de cola síncrono vs cola desacoplada (202 Accepted)
+
+- **Diseño implementado (*Hold the Connection*)**: El endpoint `POST /tareas` encola la tarea en el `PoolWorkers` y bloquea el hilo HTTP esperando el resultado mediante `futuro.result(timeout=60)`.
+- **Ventajas**:
+  - Mantiene 100% de retrocompatibilidad con el contrato HTTP síncrono del Hit 1.
+  - El cliente realiza una única solicitud HTTP y obtiene directamente el resultado (`200 OK` o error tipificado) sin requerir lógica de polling ni websockets.
+- **Trade-off y limitaciones bajo alta concurrencia**:
+  - En escenarios de saturación (como $V_3 = 50$ en R5), retener la conexión TCP y el socket HTTP abierto mientras la tarea espera turno en la min-heap consume descriptores de archivo, memoria de buffers en el kernel y conexiones activas en el servidor ASGI (Uvicorn). Si el tiempo en cola más la ejecución supera el timeout del cliente (o los 60 s del pool), la conexión se interrumpe por timeout.
+- **Alternativa desacoplada (202 Accepted)**:
+  - Una arquitectura asíncrona desacoplada respondería inmediatamente con HTTP `202 Accepted` y una cabecera `Location: /tareas/{id}` (o un identificador en el cuerpo).
+  - El cliente consultaría periódicamente (`polling`) el estado de su tarea o recibiría la respuesta mediante Server-Sent Events (SSE) o Webhooks.
+  - Esto desacopla el transporte de la ejecución y evita retener sockets HTTP bajo backpressure, a costa de introducir almacenamiento persistente para los estados de las tareas y mayor complejidad en el cliente.
 
 ### Lo demás es el Hit 1
 
@@ -249,7 +282,97 @@ Igual que en el [Hit 1](../hit1/README.md#validación-de-la-imagen-r2) (mismo c�
 
 ---
 
-## 8. Despliegue
+## 8. Autenticación por request, roles y /stats (R4)
+
+El servidor no guarda sesión: cada pedido trae su identidad y su rol en un **JWT** (HS256) en
+`Authorization: Bearer <token>`, y se valida en cada llamada. El token lleva `sub` (el usuario),
+`role` (`usuario` o `admin`) y `exp` (cuándo vence, obligatorio).
+
+| Ruta | Sin token | Rol `usuario` | Rol `admin` |
+|---|---|---|---|
+| `GET /health` | 200 (pública: la usan el healthcheck y el despliegue) | 200 | 200 |
+| `POST /getRemoteTask` | 401 | ejecuta la tarea | ejecuta la tarea |
+| `GET /stats` | 401 | 403 | 200 |
+| cualquier otra ruta | 401 | 404/405 | 404/405 |
+
+- **Quién valida:** un middleware, antes de leer el cuerpo y de encolar nada. Una ruta nueva pide token por defecto: sólo `/health` figura como pública.
+- **401 `NO_AUTORIZADO`:** falta el token, no es un JWT, está firmado con otro secreto, no tiene `exp` o venció (el mensaje dice cuál). Trae `WWW-Authenticate: Bearer`. Sólo se acepta HS256: un token sin firma (`alg: none`) se rechaza.
+- **403 `ROL_INSUFICIENTE`:** el token es válido pero el rol no alcanza (usuario en `/stats`) o no es uno de los dos roles.
+- **429 `DEMASIADOS_PEDIDOS`:** cada usuario tiene `TP2_LIMITE_PEDIDOS_MIN` pedidos por minuto (300 por defecto; 0 lo apaga), con un balde de fichas en memoria. Trae `Retry-After`. Los pedidos sin token no gastan fichas de nadie. Es un contador por identidad, no una sesión: se reinicia con el servidor.
+- **Fail-closed:** si `TP2_JWT_SECRET` falta o tiene menos de 32 caracteres, el servidor no arranca.
+- **Secretos:** el secreto llega al contenedor como archivo (`/run/secrets/jwt_secret`), no como variable, y no se versiona (`.env` está en `.gitignore`). Los tokens los emite `evidencias/emitir_token.py` (sólo librería estándar) con el secreto del entorno.
+
+### `GET /stats` (admin)
+
+```bash
+export TP2_JWT_SECRET=...
+ADMIN=$(python3 evidencias/emitir_token.py --usuario root --rol admin)
+curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8082/stats
+```
+```json
+{"codigo": 200, "contenido": {
+  "tareas_ejecutadas": 2, "tareas_fallidas": 0,
+  "tareas_por_imagen": {"docker.io/cerberusdistribuido/tarea:test": {"ejecutadas": 2, "fallidas": 0}},
+  "latencia_s": {"promedio": 0.45, "p95": 0.463, "muestras": 2},
+  "tareas_en_cola": 0, "workers_ocupados": 0, "workers_max": 4,
+  "pedidos_por_codigo": {"200": 2, "401": 3, "422": 5, "429": 1},
+  "desde": "2026-10-16T02:55:15+00:00", "uptime_s": 6, "lamport_ts": 42}}
+```
+- **Ejecutada** es la tarea que terminó bien en su contenedor; **fallida**, la que llegó a ejecutarse y terminó mal (la tarea rechazó los parámetros, falló, no contestó, no se pudo bajar la imagen). Lo que se rechaza antes de ejecutar (401, 403, 413, 422 de validación...) no es una tarea: aparece en `pedidos_por_codigo`.
+- **Latencia:** tiempo total de la tarea, cola incluida, sobre las últimas 1000 tareas; el p95 es por rango (nearest-rank).
+- Todo vive en memoria: se reinicia con el servidor.
+
+### Evidencia
+
+```bash
+evidencias/r4_autenticacion.sh hit2
+```
+Levanta el servidor con un secreto efímero y un límite de 5 pedidos por minuto, y prueba con `curl`: sin token → 401; token de usuario en `/stats` → 403; token de admin en `/stats` → 200; token con otra firma, vencido o que no es un JWT → 401; el usuario y el admin ejecutan una tarea → 200; el pedido 6 de un usuario en el mismo minuto → 429 con `Retry-After`. Sale con error si algún código no coincide. Con `TP2_URL` y `TP2_JWT_SECRET` se corre contra un servidor ya levantado.
+
+---
+
+## 9. Tareas Diversas y Matriz de Parámetros (R5)
+
+Para evaluar el comportamiento del sistema bajo cargas heterogéneas, se desarrollaron **3 imágenes de tareas especializadas**:
+1. **CPU-bound (`cerberusdistribuido/tarea:cpu-1.0.0`)**: cálculo intensivo de primos (hasta 1.000.000) y Proof-of-Work SHA-256 (`hit2/tareas/cpu/`).
+2. **Procesamiento de Archivos (`cerberusdistribuido/tarea:archivos-1.0.0`)**: ingestión de hasta 200 archivos aplicando un pipeline de hasta 5 acciones (`hit2/tareas/archivos/`).
+3. **Fallas y Timeouts (`cerberusdistribuido/tarea:falla-1.0.0`)**: inyección de excepciones 500, timeouts controlados y validación de parámetros (`hit2/tareas/falla/`).
+
+### 9.1 Resumen de Rendimiento de la Matriz $V_1 \times V_2 \times V_3$
+
+La matriz combinatoria completa de 27 celdas se encuentra documentada en detalle en el informe dedicado:
+👉 **[Ver Informe Completo de Evidencia R5 (R5_INFORME.md)](../evidencias/R5_INFORME.md)**
+
+Diseño experimental y variables:
+- **$V_1$ (Archivos de entrada)**: `1`, `10`, `100`. Se envía contenido real en cada archivo; el cuerpo mide 331 B, 2 KB y 18,7 KB para 1, 10 y 100 archivos (el límite es 64 KiB). La latencia está dominada por el ciclo de vida del contenedor (~0.89 s con un solo cliente): de 1 a 100 archivos el p50 varía de 0.89 a 0.93 s.
+- **$V_2$ (Acciones en pipeline)**: `1`, `3`, `5`. El valor 5 ($N=5$) agota la totalidad de las operaciones implementadas en el servicio tarea (`hash_sha256`, `comprimir`, `contar_palabras`, `rotar_lineas`, `analisis_frecuencia`), evaluando la profundidad máxima del pipeline.
+- **$V_3$ (Concurrencia)**: `1`, `10`, `50` clientes simultáneos con calentamiento previo y 15, 20 y 50 pedidos por celda. Son pocas muestras y una sola corrida: sirven para comparar celdas entre sí, no como valores absolutos.
+- **Desacoplamiento temporal de la cola**: La cola admite y confirma las solicitudes desacoplando el ritmo de llegada del cliente del ritmo de procesamiento del pool de workers, permitiendo ordenar por Lamport (Min-Heap) y sincronizar mediante exclusión mutua (Mutex).
+- **Medición empírica de cuellos de botella y monitoreo del Host**: Sondeo continuo de `/health` durante cada corrida para registrar los valores reales de `workers_activos` y `tareas_encoladas`, combinado con muestreo continuo de CPU y RAM del host (`/proc/stat` y `/proc/meminfo`) para certificar que la máquina no sufra saturación encubierta.
+- **Aislamiento y límites Docker**: Cada worker efímero se ejecuta con topes estrictos de hardware (`mem_limit=256m`, `nano_cpus=1_000_000_000`) garantizando que los workers compartan equitativamente la capacidad del equipo.
+
+Rangos de las 9 celdas de cada $V_3$ en la corrida que está en `mediciones/matriz_r5_resultados.json` (pool de `TP2_WORKERS_MAX = 4`, imágenes construidas en el mismo equipo del benchmark de la sección 4):
+
+| Régimen de Concurrencia | Clientes ($V_3$) | Latencia p50 Típica | Latencia p95 Típica | Diagnóstico Empírico del Cuello de Botella (Medido en `/health`) |
+|---|---|---|---|---|
+| **Baja / Secuencial** | 1 | 0.89 – 1.00 s | 1.02 – 1.97 s | `/health`: 1/4 worker activo, 0 encoladas. Cuello de botella: ciclo de vida del contenedor efímero (~0.89 s) |
+| **Media** | 10 | 2.40 – 3.82 s | 7.41 – 8.82 s | `/health`: 4/4 workers activos y hasta 4 tareas encoladas. Cuello de botella: el número de workers |
+| **Alta** | 50 | 13.39 – 16.12 s | 25.03 – 27.34 s | `/health`: 4/4 workers activos y hasta 35 tareas encoladas. Cuello de botella: el número de workers. Host sin saturación de RAM/CPU |
+
+### 9.2 Bots sin token en la matriz
+- Todas las celdas mezclan 3 usuarios con JWT distintos y un 20 % de pedidos de bots, sin token o con uno inválido. El servidor los rechaza con `401 NO_AUTORIZADO` antes de la cola y sin crear contenedores (ver [la sección 8](#8-autenticación-por-request-roles-y-stats-r4)).
+- La matriz se corre con `TP2_LIMITE_PEDIDOS_MIN=0` (sin límite por usuario): los 429 no son parte de la medición.
+
+Para reproducir la evaluación completa:
+```bash
+./evidencias/r5_matriz_parametros.sh hit2
+# O contra el servidor público desplegado:
+# TP2_SERVIDOR="http://18.231.127.74:8082" ./evidencias/r5_matriz_parametros.sh
+```
+
+---
+
+## 10. Despliegue
 
 Público en **http://18.231.127.74:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
 
@@ -264,7 +387,7 @@ flowchart LR
 
 - En cada push a `main`, después de gitleaks y de los tests unitarios y de integración, el CI (`.github/workflows/ci.yml`) publica la imagen del servidor en GHCR (`ghcr.io/chimera-sdypp/sdypp_tp2-hit2`) con el `GITHUB_TOKEN` efímero del job.
 - En la VM, un timer de systemd (`sdypp-tp2-hit2.timer`) hace `docker compose pull && up -d` cada 5 minutos, con el mismo candado (`flock`) que los timers de los otros hits. GitHub no tiene ninguna credencial de la VM.
-- Después, el CI prueba lo desplegado: manda con el cliente una suma (`200`, con su `lamport_ts`) y una división por cero (`422`) a la URL pública.
+- Después, el CI prueba lo desplegado sin ningún secreto: `/health` responde `200` y `/stats` y `/getRemoteTask` sin token responden `401`.
 - El paquete de GHCR tiene que ser **público**, porque la VM lo baja sin credenciales.
 
 ### Instalación en la VM:
@@ -273,7 +396,8 @@ flowchart LR
 scp -i clave.pem hit2/despliegue/instalar_vm.sh hit2/docker-compose.yml ubuntu@<IP>:
 ssh -i clave.pem ubuntu@<IP>
 # en la VM: crear ~/.env a partir de .env.example, con TP2_PUERTO=8082 y
-#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit2:latest; luego:
+#   TP2_IMAGEN=ghcr.io/chimera-sdypp/sdypp_tp2-hit2:latest y TP2_JWT_SECRET=<secreto de 32+ caracteres>
+#   (sin el secreto el servidor no arranca); luego:
 sudo bash instalar_vm.sh && rm ~/.env
 ```
 

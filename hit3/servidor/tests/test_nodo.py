@@ -7,7 +7,7 @@ from app.errores import ErrorApi, TipoError
 from app.imagenes import parsear
 from app.lanzador import SinConexion, Vencido
 from app.nodo import Nodo
-from dobles import logger_silencioso, sobre
+from dobles import ejecucion, logger_silencioso, sobre
 
 IMAGEN = parsear("cerberusdistribuido/tarea:1.0")
 PARES = ((2, "http://nodo2"), (3, "http://nodo3"))
@@ -23,7 +23,7 @@ class LanzadorFalso:
         self.llamadas.append((imagen.referencia, calculo))
         if self.al_ejecutar:
             self.al_ejecutar()
-        return 7
+        return ejecucion(7)
 
     def limpiar_huerfanos(self):
         self.huerfanos_limpiados = True
@@ -63,7 +63,8 @@ def _nodo(http=None, coordinador=None, **cambios):
 
 
 def _ejecutar(nodo):
-    return nodo.ejecutar(IMAGEN, "suma", {"a": 3, "b": 4}, {})
+    despacho = nodo.ejecutar(IMAGEN, "suma", {"a": 3, "b": 4}, {})
+    return despacho.ejecucion.resultado, despacho.nodo
 
 
 # ---------------------------------------------------------------- caso feliz
@@ -209,6 +210,22 @@ def test_al_asumir_anota_a_los_que_aceptaron_el_anuncio():
     assert set(nodo.registro.estado()) == {"1", "2"}
 
 
+def test_adopcion_atomica_no_pierde_heartbeat_en_vuelo():
+    # Cuando el nodo 2 acepta el COORDINADOR, manda inmediatamente un heartbeat con 3 tareas en curso.
+    # El coordinador nuevo no debe borrar ese heartbeat al terminar de proclamarse.
+    def responder_coordinador_y_mandar_heartbeat(metodo, url, cuerpo=None, timeout=5.0):
+        if url == "http://nodo2/cluster/coordinador":
+            nodo.recibir_heartbeat(2, 3)
+            return sobre(200, {"coordinador": 1})
+        raise SinConexion("refused")
+
+    nodo, _ = _nodo(responder_coordinador_y_mandar_heartbeat)
+    nodo.bully._proclamarse()
+    estado = nodo.registro.estado()
+    assert set(estado) == {"1", "2"}
+    assert estado["2"]["tareas_en_curso"] == 3
+
+
 def test_iniciar_limpia_huerfanos_y_convoca_eleccion():
     nodo, lanzador = _nodo(intervalo_heartbeat=0.01)
     nodo.iniciar()
@@ -217,3 +234,38 @@ def test_iniciar_limpia_huerfanos_y_convoca_eleccion():
         assert lanzador.huerfanos_limpiados
     finally:
         nodo.detener()
+
+
+# ---------------------------------------------------------------- /stats del cluster (R4)
+def test_estadisticas_de_los_pares_junta_lo_que_contestan_y_marca_los_que_no():
+    http = Http({"http://nodo2/cluster/stats": sobre(200, {"estadisticas": {"ejecutadas": 2}, "tareas_en_curso": 1})})
+    nodo, _ = _nodo(http=http)
+    contestaron, sin_respuesta = nodo.estadisticas_de_los_pares()
+    assert contestaron == {2: {"estadisticas": {"ejecutadas": 2}, "tareas_en_curso": 1}}
+    assert sin_respuesta == [3]          # el nodo 3 no tiene respuesta configurada: no contesta
+
+
+def test_estadisticas_de_los_pares_sin_pares():
+    config = Config(nodo_id=1)
+    nodo = Nodo(config, logger_silencioso(), LanzadorFalso(), http=Http())
+    assert nodo.estadisticas_de_los_pares() == ({}, [])
+
+
+# ---------------------------------------------------------------- metadata de la ejecución (R3)
+def test_la_ejecucion_remota_trae_la_metadata_del_ejecutor():
+    http = Http({"http://nodo3/cluster/asignar": sobre(200, {"nodo": 2}),
+                 "http://nodo2/cluster/ejecutar": sobre(200, {
+                     "resultado": 7, "nodo": 2, "contenedor": "aaaabbbbcccc", "imagen_id": "sha256:" + "1" * 64,
+                     "digest": "sha256:" + "2" * 64, "ejecucion_s": 0.5})})
+    nodo, _ = _nodo(http, coordinador=3)
+    despacho = nodo.ejecutar(IMAGEN, "suma", {"a": 3, "b": 4}, {})
+    assert despacho.nodo == 2
+    assert tuple(despacho.ejecucion) == (7, "aaaabbbbcccc", "sha256:" + "1" * 64, "sha256:" + "2" * 64, 0.5)
+    assert despacho.asignacion_s >= 0
+
+
+def test_la_ejecucion_local_trae_la_metadata_del_lanzador():
+    nodo, _ = _nodo(coordinador=1)
+    despacho = nodo.ejecutar(IMAGEN, "suma", {"a": 3, "b": 4}, {})
+    assert (despacho.nodo, despacho.ejecucion.contenedor) == (1, "c0ffee123456")
+

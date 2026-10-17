@@ -4,32 +4,86 @@ Se levanta con `uvicorn --factory app.main:crear_app`. La fábrica recibe la
 configuración, el lanzador, el reloj de Lamport y el pool de workers.
 """
 
+import math
 import time
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import imagenes, registro
+from app import auth, imagenes, registro
 from app.config import Config
 from app.errores import ErrorApi, TipoError, responder, responder_error
+from app.estadisticas import Estadisticas
 from app.lamport import RelojLamport
 from app.lanzador import Lanzador
+from app.limitador import LimitadorPorUsuario
 from app.pool import PoolWorkers
 from app.validacion import validar_solicitud
 
 
 def crear_app(config=None, lanzador=None, reloj=None, pool=None):
     config = config or Config.desde_entorno()
+    auth.validar_secreto(config.jwt_secreto)
     log, _ = registro.configurar(config.dir_logs)
     lanzador = lanzador or Lanzador(config, log)
     reloj = reloj or RelojLamport()
     pool = pool or PoolWorkers(lanzador, config.workers_max, log)
+    estadisticas = Estadisticas()
+    limitador = LimitadorPorUsuario(config.limite_pedidos_min)
     permitidas = imagenes.lista_blanca(config.imagenes_permitidas)
     if not permitidas:
         log.warning("TP2_IMAGENES_PERMITIDAS está vacía: se va a rechazar toda tarea")
 
     app = FastAPI(title="TP2 · Hit 2 · Servidor con Pool de Workers y Relojes de Lamport", redirect_slashes=False)
+
+    # Qué rol hace falta en cada ruta. Una ruta que no está acá pide un token válido de
+    # cualquier rol; sólo `/health` es pública (lo usan el healthcheck y el despliegue).
+    rutas_publicas = {"/health"}
+    roles_por_ruta = {"/stats": {auth.ROL_ADMIN}}
+
+    # --------------------------------------------------------------------------
+    # 1. Middleware de Autenticación y Control de Acceso (Requisito R4)
+    # --------------------------------------------------------------------------
+    @app.middleware("http")
+    async def autenticacion(request: Request, call_next):
+        """Valida identidad, privilegios de rol (RBAC) y cuota de tasa (Token Bucket).
+        
+        Secuencia de Control Fail-Closed:
+        1. Si la ruta es pública (`/health`), pasa sin autenticar.
+        2. Extrae y valida el JWT (`Authorization: Bearer <token>`). Si falta, expiró
+           o la firma no coincide, aborta de inmediato con HTTP 401 NO_AUTORIZADO.
+        3. Valida el rol del usuario contra la ruta solicitada:
+           - `/stats` exige estrictamente rol `admin`. Si un `usuario` intenta acceder,
+             se rechaza con HTTP 403 ROL_INSUFICIENTE antes de consultar métricas.
+        4. Si es un POST a `/getRemoteTask`, consulta el limitador de tasa Token Bucket.
+           Si el usuario superó su cuota de `limite_pedidos_min`, rechaza con
+           HTTP 429 DEMASIADOS_PEDIDOS e incluye la cabecera estándar `Retry-After`.
+        """
+        ruta = request.url.path
+        if ruta in rutas_publicas:
+            return await call_next(request)
+        try:
+            identidad = auth.autenticar(request.headers.get("authorization"), config.jwt_secreto)
+            permitidos = roles_por_ruta.get(ruta)
+            if permitidos and identidad.rol not in permitidos:
+                raise ErrorApi(TipoError.ROL_INSUFICIENTE,
+                               f"{ruta} es sólo para {'/'.join(sorted(permitidos))} (tu rol: {identidad.rol})")
+            if ruta == "/getRemoteTask" and request.method == "POST":
+                espera = limitador.reservar(identidad.usuario)
+                if espera:
+                    reintentar = math.ceil(espera)
+                    raise ErrorApi(TipoError.DEMASIADOS_PEDIDOS,
+                                   f"más de {config.limite_pedidos_min} pedidos por minuto para {identidad.usuario}: "
+                                   f"reintentá en {reintentar} s",
+                                   cabeceras={"Retry-After": str(reintentar)})
+        except ErrorApi as error:
+            res = responder_error(error)
+            res.headers["X-Lamport-Clock"] = str(reloj.incrementar())
+            return res
+        request.state.identidad = identidad
+        return await call_next(request)
 
     @app.middleware("http")
     async def bitacora(request: Request, call_next):
@@ -58,8 +112,12 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             respuesta.headers["X-Lamport-Clock"] = str(reloj.incrementar())
         ts_salida = int(respuesta.headers["x-lamport-clock"])
 
-        log.info("%s %s | %d | %.0f ms | lamport_ts=%d", request.method, request.url.path,
-                 respuesta.status_code, (time.perf_counter() - inicio) * 1000, ts_salida)
+        if request.url.path == "/getRemoteTask":
+            estadisticas.registrar_pedido(respuesta.status_code)
+        identidad = getattr(request.state, "identidad", None)
+        log.info("%s %s | %d | %.0f ms | lamport_ts=%d | usuario=%s", request.method, request.url.path,
+                 respuesta.status_code, (time.perf_counter() - inicio) * 1000, ts_salida,
+                 identidad.usuario if identidad else "-")
         return respuesta
 
     @app.exception_handler(ErrorApi)
@@ -99,8 +157,27 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
                            interno=f"digests de la imagen: {sorted(digests) or 'ninguno'}")
         return imagen
 
+    # --------------------------------------------------------------------------
+    # 2. Endpoint de Ejecución de Tareas Remotas (Requisitos R3, R4 y R5)
+    # --------------------------------------------------------------------------
     @app.post("/getRemoteTask")
     async def getRemoteTask(request: Request):  # noqa: N802 (nombre del enunciado)
+        """Recepciona, valida y despacha una tarea remota al pool de workers.
+        
+        Flujo de Ejecución Desacoplado:
+        1. CONTROL PREVIO (Fail-Fast): Valida tamaño del cuerpo, sintaxis JSON y whitelist
+           de imágenes ANTES de encolar. Una petición inválida se rechaza en microsegundos y
+           nunca consume memoria en la cola ni ocupa un hilo worker.
+        2. DESACOPLAMIENTO TEMPORAL: La tarea se ingresa en el `PoolWorkers` con el timestamp
+           lógico de Lamport del cliente (`ts_solicitud`). Si todos los workers están ocupados,
+           la petición espera en la Min-Heap sin saturar hilos ni rechazar la conexión.
+        3. MÉTRICAS DIFERENCIADAS (R5):
+           - `en_cola_s`: Tiempo de espera en la cola hasta que un worker libre la toma.
+           - `ejecucion_s`: Tiempo neto de cómputo dentro del contenedor Docker aislado.
+           - `total_s`: Latencia total percibida por el cliente HTTP.
+        """
+        inicio_total = time.perf_counter()
+        task_id = str(uuid.uuid4())
         cuerpo = await request.body()
         if len(cuerpo) > config.max_cuerpo:
             raise ErrorApi(TipoError.CUERPO_DEMASIADO_GRANDE,
@@ -110,28 +187,55 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
         imagen = await _validar_imagen(solicitud.imagen)
 
         ts_solicitud = request.state.ts_cliente
-        log.info("tarea | %s | calculo=%s | lamport_ts=%d", imagen.referencia, solicitud.calculo, ts_solicitud)
+        log.info("tarea | %s | %s | calculo=%s | lamport_ts=%d", task_id, imagen.referencia, solicitud.calculo, ts_solicitud)
 
         # Encolar en el pool de workers (con exclusión mutua y ordenamiento Lamport)
-        resultado = await run_in_threadpool(
-            pool.ejecutar_tarea,
-            imagen,
-            solicitud.calculo,
-            solicitud.parametros,
-            solicitud.datos,
-            ts_solicitud
-        )
+        inicio_tarea = time.perf_counter()
+        try:
+            ejecucion, en_cola_s = await run_in_threadpool(
+                pool.ejecutar_tarea,
+                imagen,
+                solicitud.calculo,
+                solicitud.parametros,
+                solicitud.datos,
+                ts_solicitud
+            )
+        except Exception:
+            estadisticas.registrar_tarea(imagen.referencia, False, time.perf_counter() - inicio_tarea)
+            raise
+        estadisticas.registrar_tarea(imagen.referencia, True, time.perf_counter() - inicio_tarea)
 
         ts_respuesta = reloj.incrementar()
         return responder(
             200,
             {
                 "calculo": solicitud.calculo,
-                "resultado": resultado,
+                "resultado": ejecucion.resultado,
+                "task_id": task_id,
+                "imagen": imagen.referencia,
+                "digest": ejecucion.digest,
+                "imagen_id": ejecucion.imagen_id,
+                "contenedor": ejecucion.contenedor,
+                "tiempos": {"en_cola_s": en_cola_s, "ejecucion_s": ejecucion.ejecucion_s,
+                            "total_s": round(time.perf_counter() - inicio_total, 4)},
                 "lamport_ts": ts_respuesta
             },
             cabeceras={"X-Lamport-Clock": str(ts_respuesta)}
         )
+
+    # --------------------------------------------------------------------------
+    # 3. Endpoint de Observabilidad y Telemetría (Requisito R4)
+    # --------------------------------------------------------------------------
+    @app.get("/stats")
+    def stats():
+        """Devuelve telemetría operativa en vivo (exclusivo para usuarios con rol `admin`).
+        
+        Incluye tareas ejecutadas, fallidas, ventana de latencias con percentil P95,
+        distribución por imagen, estado del pool de workers y cola de Lamport.
+        """
+        ts_respuesta = reloj.incrementar()
+        return responder(200, {**estadisticas.instantanea(pool), "lamport_ts": ts_respuesta},
+                         cabeceras={"X-Lamport-Clock": str(ts_respuesta)})
 
     @app.get("/health")
     def health():

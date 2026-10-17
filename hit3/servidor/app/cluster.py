@@ -30,6 +30,17 @@ class RegistroNodos:
         with self._lock:
             self._nodos.clear()
 
+    def asumir_coordinador(self, nodo, tareas_en_curso):
+        """Toma el control del clúster sin dejar una ventana de inconsistencia.
+
+        El reinicio y la primera actualización del propio nodo deben verse como una
+        sola transacción: si llega un heartbeat paralelo, no puede borrar el estado
+        recién conocido de otros nodos.
+        """
+        with self._lock:
+            self._nodos.clear()
+            self._nodos[nodo] = EstadoNodo(tareas_en_curso, self._reloj())
+
     def actualizar(self, nodo, tareas_en_curso):
         """Un heartbeat: el nodo está vivo y tiene `tareas_en_curso` tareas."""
         with self._lock:

@@ -24,3 +24,9 @@ logs/
 .vscode/
 *.swp
 .DS_Store
+
+# Documento de contexto del TP2 y guiones de videos: nunca deben quedar en el repositorio ni ser rastreados
+contexto_punto.md
+contexto-punto.md
+"contexto punto.md"
+videos/

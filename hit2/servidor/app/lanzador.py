@@ -9,6 +9,7 @@ import json
 import time
 import urllib.error
 import urllib.request
+from typing import Any, NamedTuple
 
 import docker
 from docker.errors import APIError, DockerException, NotFound
@@ -18,6 +19,25 @@ from app.errores import ErrorApi, TipoError
 
 # Errores de "no llego al daemon": socket ausente, sin permiso, daemon caído.
 _SIN_DOCKER = (DockerException, RequestException, OSError)
+
+
+class Ejecucion(NamedTuple):
+    """Lo que devuelve `ejecutarTareaRemota()`: el resultado y con qué se obtuvo."""
+    resultado: Any
+    contenedor: str     # id corto (12 caracteres) del contenedor que ejecutó la tarea
+    imagen_id: str      # sha256 de la imagen local con que se creó (siempre existe)
+    digest: Any         # sha256 del repositorio (RepoDigests); None si la imagen no vino de un registry
+    ejecucion_s: float  # de crear el contenedor a tener la respuesta de la tarea
+
+
+def _digest_ejecutado(imagen, local):
+    """El digest del registry de la imagen local, o None (p. ej. una imagen construida en el host).
+    Si la imagen tiene varios, el del repositorio pedido."""
+    candidatos = [d.partition("@") for d in local.attrs.get("RepoDigests") or []]
+    propios = [digest for repo, _, digest in candidatos
+               if repo.removeprefix("docker.io/") == imagen.nombre.removeprefix("docker.io/")]
+    elegidos = propios or [digest for _, _, digest in candidatos]
+    return min(elegidos) if elegidos else None
 
 
 class SinConexion(Exception):
@@ -68,6 +88,8 @@ class Lanzador:
         self._reloj = reloj
         self._dormir = dormir
         self._cliente = None
+        self._ultimo_ping_t = None
+        self._ultimo_ping_ok = False
 
     def _docker(self):
         """Se conecta recién cuando hace falta: si Docker no está al arrancar, el
@@ -79,10 +101,20 @@ class Lanzador:
                 raise _sin_docker(error) from None
         return self._cliente
 
-    def disponible(self):
+    def disponible(self, ttl: float = 1.0):
+        """Comprueba disponibilidad de Docker. Con ttl > 0 reutiliza el resultado
+        reciente para no saturar el socket Unix bajo alta concurrencia."""
+        ahora = self._reloj()
+        if self._ultimo_ping_t is not None and (ahora - self._ultimo_ping_t) < ttl:
+            return self._ultimo_ping_ok
         try:
-            return bool(self._docker().ping())
+            ok = bool(self._docker().ping())
+            self._ultimo_ping_t = ahora
+            self._ultimo_ping_ok = ok
+            return ok
         except (ErrorApi, *_SIN_DOCKER):
+            self._ultimo_ping_t = ahora
+            self._ultimo_ping_ok = False
             return False
 
     def preparar_imagen(self, imagen):
@@ -93,16 +125,43 @@ class Lanzador:
         return {d.partition("@")[2] for d in local.attrs.get("RepoDigests") or []}
 
     def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802 (nombre del enunciado)
+        """Ejecuta una tarea remota instanciando un contenedor efímero aislado (Requisito R5).
+        
+        Principios de Aislamiento y Contención de Recursos:
+        1. LÍMITES DE HARDWARE ESTRICTOS (cgroups):
+           - `nano_cpus`: Convierte el valor en cores a nanosegundos de CPU para el kernel Linux.
+             Si `tarea_cpus=1.0`, se fija `nano_cpus=1_000_000_000`. Esto previene que una tarea
+             intensiva en cómputo monopolice los núcleos del procesador físico del host.
+           - `mem_limit`: Acota la memoria física máxima (ej. '256m') evitando que una tarea con
+             fugas de memoria dispare el OOM-Killer sobre el servidor principal.
+        2. CREACIÓN ATÓMICA Y LIMPIEZA GARANTIZADA:
+           - Se ejecuta `containers.create()` seguido de `start()`: si la inicialización falla,
+             tenemos la referencia al objeto para destruirlo en el bloque `finally:`.
+           - El bloque `finally:` asegura la destrucción inmediata del contenedor (`remove(force=True)`),
+             impidiendo la acumulación de contenedores zombie y fugas de descriptores en Docker.
+        """
         cliente = self._docker()
-        self._asegurar_imagen(cliente, imagen)
+        local = self._asegurar_imagen(cliente, imagen)
         contenedor = None
         try:
+            inicio = time.perf_counter()
             # create + start por separado: si falla el start, `containers.run()`
             # deja el contenedor creado y no habría referencia para borrarlo.
-            contenedor = cliente.containers.create(imagen.referencia, network=self._config.red_tareas)
+            kwargs_crear = {
+                "network": self._config.red_tareas,
+            }
+            # Requisito R5: Inyección de límites de hardware en el motor de Docker
+            if getattr(self._config, "tarea_mem_limit", None):
+                kwargs_crear["mem_limit"] = self._config.tarea_mem_limit
+            if getattr(self._config, "tarea_cpus", None) and self._config.tarea_cpus > 0:
+                kwargs_crear["nano_cpus"] = int(self._config.tarea_cpus * 1_000_000_000)
+
+            contenedor = cliente.containers.create(imagen.referencia, **kwargs_crear)
             contenedor.start()
             base = self._esperar_listo(contenedor)
-            return self._enviar(base, calculo, parametros, datos)
+            resultado = self._enviar(base, calculo, parametros, datos)
+            return Ejecucion(resultado, str(contenedor.id)[:12], local.id, _digest_ejecutado(imagen, local),
+                             round(time.perf_counter() - inicio, 4))
         except APIError as error:
             raise ErrorApi(TipoError.TAREA_FALLIDA, "no se pudo levantar el contenedor de la tarea",
                            interno=str(error)) from None
@@ -115,6 +174,7 @@ class Lanzador:
                     contenedor.remove(force=True)
                 except _SIN_DOCKER as error:
                     self._log.warning("no se pudo borrar el contenedor %s: %s", contenedor.id, error)
+
 
     def _asegurar_imagen(self, cliente, imagen):
         """Descarga la imagen si no está en el host, con las credenciales del

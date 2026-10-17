@@ -9,6 +9,7 @@ import json
 import time
 import urllib.error
 import urllib.request
+from typing import Any, NamedTuple
 
 import docker
 from docker.errors import APIError, DockerException, NotFound
@@ -18,6 +19,25 @@ from app.errores import ErrorApi, TipoError
 
 # Errores de "no llego al daemon": socket ausente, sin permiso, daemon caído.
 _SIN_DOCKER = (DockerException, RequestException, OSError)
+
+
+class Ejecucion(NamedTuple):
+    """Lo que devuelve `ejecutarTareaRemota()`: el resultado y con qué se obtuvo."""
+    resultado: Any
+    contenedor: str     # id corto (12 caracteres) del contenedor que ejecutó la tarea
+    imagen_id: str      # sha256 de la imagen local con que se creó (siempre existe)
+    digest: Any         # sha256 del repositorio (RepoDigests); None si la imagen no vino de un registry
+    ejecucion_s: float  # de crear el contenedor a tener la respuesta de la tarea
+
+
+def _digest_ejecutado(imagen, local):
+    """El digest del registry de la imagen local, o None (p. ej. una imagen construida en el host).
+    Si la imagen tiene varios, el del repositorio pedido."""
+    candidatos = [d.partition("@") for d in local.attrs.get("RepoDigests") or []]
+    propios = [digest for repo, _, digest in candidatos
+               if repo.removeprefix("docker.io/") == imagen.nombre.removeprefix("docker.io/")]
+    elegidos = propios or [digest for _, _, digest in candidatos]
+    return min(elegidos) if elegidos else None
 
 
 class SinConexion(Exception):
@@ -94,15 +114,18 @@ class Lanzador:
 
     def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802 (nombre del enunciado)
         cliente = self._docker()
-        self._asegurar_imagen(cliente, imagen)
+        local = self._asegurar_imagen(cliente, imagen)
         contenedor = None
         try:
+            inicio = time.perf_counter()
             # create + start por separado: si falla el start, `containers.run()`
             # deja el contenedor creado y no habría referencia para borrarlo.
             contenedor = cliente.containers.create(imagen.referencia, network=self._config.red_tareas)
             contenedor.start()
             base = self._esperar_listo(contenedor)
-            return self._enviar(base, calculo, parametros, datos)
+            resultado = self._enviar(base, calculo, parametros, datos)
+            return Ejecucion(resultado, str(contenedor.id)[:12], local.id, _digest_ejecutado(imagen, local),
+                             round(time.perf_counter() - inicio, 4))
         except APIError as error:
             raise ErrorApi(TipoError.TAREA_FALLIDA, "no se pudo levantar el contenedor de la tarea",
                            interno=str(error)) from None

@@ -14,9 +14,15 @@ from typing import Any, Optional
 class ClienteHit2:
     """Cliente para interactuar con la API del Servidor de Tareas (Hit #2)."""
 
-    def __init__(self, base_url: str = "http://localhost:8080", reloj_inicial: int = 0):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8080",
+        reloj_inicial: int = 0,
+        token: Optional[str] = None
+    ):
         self.base_url = base_url.rstrip("/")
         self.reloj_lamport = reloj_inicial
+        self.token = token or ""
 
     def enviar_tarea(
         self,
@@ -24,7 +30,8 @@ class ClienteHit2:
         parametros: dict[str, Any],
         imagen: str = "cerberusdistribuido/tarea:1.0.0",
         datos: Optional[dict[str, Any]] = None,
-        timeout: float = 60.0
+        timeout: float = 60.0,
+        token: Optional[str] = None
     ) -> dict[str, Any]:
         """Envía una tarea remota incrementando el reloj de Lamport local y actualizándolo con la respuesta."""
         # 1. Incrementar el reloj local antes de enviar la petición (evento interno/envío)
@@ -43,6 +50,9 @@ class ClienteHit2:
             "Content-Type": "application/json",
             "X-Lamport-Clock": str(ts_envio)
         }
+        token_a_usar = token if token is not None else self.token
+        if token_a_usar:
+            headers["Authorization"] = f"Bearer {token_a_usar}"
 
         url = f"{self.base_url}/getRemoteTask"
         req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
@@ -77,12 +87,17 @@ class ClienteHit2:
             "lamport_ts_servidor": ts_remoto
         }
 
-    def health(self) -> dict[str, Any]:
+    def health(self, token: Optional[str] = None) -> dict[str, Any]:
         """Consulta el estado del servidor y su reloj de Lamport."""
         self.reloj_lamport += 1
+        headers = {"X-Lamport-Clock": str(self.reloj_lamport)}
+        token_a_usar = token if token is not None else self.token
+        if token_a_usar:
+            headers["Authorization"] = f"Bearer {token_a_usar}"
+
         req = urllib.request.Request(
             f"{self.base_url}/health",
-            headers={"X-Lamport-Clock": str(self.reloj_lamport)},
+            headers=headers,
             method="GET"
         )
         with urllib.request.urlopen(req, timeout=5.0) as resp:
@@ -108,9 +123,10 @@ def main():
     parser.add_argument("--datos", type=json.loads, default={}, help="objeto JSON con datos adicionales")
     parser.add_argument("--imagen", default="cerberusdistribuido/tarea:1.0.0", help="imagen Docker de la tarea")
     parser.add_argument("--servidor", default=os.environ.get("TP2_SERVIDOR", "http://localhost:8080"))
+    parser.add_argument("--token", default=os.environ.get("TP2_TOKEN", ""), help="JWT (Authorization: Bearer), ver evidencias/emitir_token.py")
     args = parser.parse_args()
 
-    cliente = ClienteHit2(args.servidor)
+    cliente = ClienteHit2(args.servidor, token=args.token)
     try:
         resp = cliente.enviar_tarea(args.calculo, args.parametros, imagen=args.imagen, datos=args.datos)
     except urllib.error.URLError as error:

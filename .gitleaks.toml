@@ -1,0 +1,11 @@
+[allowlist]
+description = "Permitir secretos simulados de tests unitarios para autenticacion JWT"
+regexes = [
+    '''secreto-de-prueba-de-al-menos-32-caracteres''',
+    '''otro-secreto-que-tambien-tiene-mas-de-32-caracteres''',
+]
+paths = [
+    '''hit1/servidor/tests/.*''',
+    '''hit2/servidor/tests/.*''',
+    '''hit3/servidor/tests/.*''',
+]

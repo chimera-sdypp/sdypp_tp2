@@ -9,6 +9,7 @@ Van en orden: los de caídas dejan el cluster como estaba.
 
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -24,12 +25,17 @@ URL_NODO1 = os.environ.get("TP2_URL_NODO1", "http://127.0.0.1:18081").rstrip("/"
 PROYECTO = "tp2-hit3"
 IMAGEN = "cerberusdistribuido/tarea-prueba:test"
 ETIQUETA = "tp2.hit3.nodo"
+# Los emite integracion.sh con el secreto de los nodos (R4).
+TOKEN = os.environ.get("TP2_TOKEN", "")
+TOKEN_ADMIN = os.environ.get("TP2_TOKEN_ADMIN", "")
 
 
-def pedir(metodo, ruta, cuerpo=None, url=URL, timeout=30):
+def pedir(metodo, ruta, cuerpo=None, url=URL, timeout=30, token=TOKEN):
     datos = None if cuerpo is None else json.dumps(cuerpo).encode()
-    pedido = urllib.request.Request(url + ruta, data=datos, method=metodo,
-                                    headers={"Content-Type": "application/json"})
+    cabeceras = {"Content-Type": "application/json"}
+    if token:
+        cabeceras["Authorization"] = f"Bearer {token}"
+    pedido = urllib.request.Request(url + ruta, data=datos, method=metodo, headers=cabeceras)
     try:
         with urllib.request.urlopen(pedido, timeout=timeout) as r:
             return r.status, json.loads(r.read())
@@ -239,3 +245,46 @@ def test_no_quedan_contenedores_tarea():
     """Va último (pytest respeta el orden del archivo): después de todo lo anterior."""
     cliente = docker.from_env()
     esperar(lambda: not cliente.containers.list(all=True, filters={"label": ETIQUETA}), timeout=10)
+
+
+def test_sin_token_o_con_token_de_usuario_no_se_pasa():
+    codigo, cuerpo = pedir("POST", "/getRemoteTask", {"calculo": "suma", "parametros": {"a": 1, "b": 1}, "imagen": IMAGEN}, token="")
+    assert (codigo, cuerpo["contenido"]["error"]["tipo"]) == (401, "NO_AUTORIZADO")
+    codigo, cuerpo = pedir("GET", "/stats")
+    assert (codigo, cuerpo["contenido"]["error"]["tipo"]) == (403, "ROL_INSUFICIENTE")
+    codigo, _ = pedir("GET", "/stats", token="")
+    assert codigo == 401
+
+
+def test_stats_junta_los_tres_nodos_sin_importar_cual_atienda():
+    antes = pedir("GET", "/stats", token=TOKEN_ADMIN)[1]["contenido"]
+    for _ in range(6):                    # nginx las reparte entre los nodos
+        assert tarea("suma", {"a": 1, "b": 2})[0] == 200
+    tarea("division", {"a": 1, "b": 0})   # la tarea la rechaza: fallida
+    # Pedidos que caen en nodos distintos tienen que dar el mismo total.
+    totales = set()
+    for _ in range(6):
+        codigo, cuerpo = pedir("GET", "/stats", token=TOKEN_ADMIN)
+        stats = cuerpo["contenido"]
+        assert codigo == 200 and stats["nodos_sin_respuesta"] == []
+        assert sorted(stats["nodos"]) == ["1", "2", "3"]
+        totales.add((stats["tareas_ejecutadas"], stats["tareas_fallidas"]))
+    assert totales == {(antes["tareas_ejecutadas"] + 6, antes["tareas_fallidas"] + 1)}
+    assert sum(n["tareas_ejecutadas"] for n in stats["nodos"].values()) == stats["tareas_ejecutadas"]
+    assert stats["latencia_s"]["p95"] is not None
+
+
+def test_la_respuesta_trae_la_metadata_de_la_ejecucion():
+    codigo, cuerpo = tarea("suma", {"a": 3, "b": 4})
+    contenido = cuerpo["contenido"]
+    assert codigo == 200 and contenido["resultado"] == 7
+    assert re.fullmatch(r"[0-9a-f-]{36}", contenido["task_id"])
+    assert contenido["imagen"] == "docker.io/" + IMAGEN
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["imagen_id"])
+    # Una imagen construida en el host puede no tener digest de registry (depende del almacén de Docker).
+    assert contenido["digest"] is None or re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["digest"])
+    assert re.fullmatch(r"[0-9a-f]{12}", contenido["contenedor"])
+    tiempos = contenido["tiempos"]
+    assert 0 <= tiempos["en_cola_s"] <= tiempos["total_s"] and 0 < tiempos["ejecucion_s"] <= tiempos["total_s"]
+    assert contenido["nodo"] in (1, 2, 3)
+

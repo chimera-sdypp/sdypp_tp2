@@ -14,13 +14,14 @@ import urllib.error
 import urllib.request
 
 
-def enviar_tarea(servidor, calculo, parametros, datos, imagen, timeout=120.0):
+def enviar_tarea(servidor, calculo, parametros, datos, imagen, timeout=120.0, token=None):
     """POST /getRemoteTask. Devuelve el sobre {codigo, contenido} del servidor."""
     cuerpo = {"calculo": calculo, "parametros": parametros, "datos": datos, "imagen": imagen}
+    token = os.environ.get("TP2_TOKEN", "") if token is None else token   # JWT, ver evidencias/emitir_token.py
     pedido = urllib.request.Request(
         f"{servidor.rstrip('/')}/getRemoteTask",
         data=json.dumps(cuerpo).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {token}"} if token else {})},
         method="POST",
     )
     try:
@@ -37,10 +38,11 @@ def main():
     parser.add_argument("--datos", type=json.loads, default={}, help="objeto JSON con datos adicionales")
     parser.add_argument("--imagen", required=True, help="imagen Docker de la tarea (repositorio:tag)")
     parser.add_argument("--servidor", default=os.environ.get("TP2_SERVIDOR", "http://localhost:8080"))
+    parser.add_argument("--token", default=None, help="JWT (por defecto, TP2_TOKEN)")
     args = parser.parse_args()
 
     try:
-        respuesta = enviar_tarea(args.servidor, args.calculo, args.parametros, args.datos, args.imagen)
+        respuesta = enviar_tarea(args.servidor, args.calculo, args.parametros, args.datos, args.imagen, token=args.token)
     except urllib.error.URLError as error:
         sys.exit(f"no se pudo conectar con {args.servidor}: {error.reason}")
     print(json.dumps(respuesta, ensure_ascii=False, indent=2))

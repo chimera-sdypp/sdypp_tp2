@@ -3,8 +3,8 @@ info:
   title: TP2 · Servidor de tareas remotas (Hits 1, 2 y 3)
   version: 1.0.0
   description: |
-    Contrato público de los tres servidores. Los tres exponen las mismas dos rutas; se elige el
-    hit en **Servers**.
+    Contrato público de los tres servidores. Los tres exponen las mismas rutas (`/getRemoteTask`,
+    `/stats` y `/health`); se elige el hit en **Servers**.
 
     | Hit | Qué agrega |
     |---|---|
@@ -17,9 +17,16 @@ info:
     para personas y puede cambiar. Otra ruta → `404 RUTA_INEXISTENTE`; otro método →
     `405 METODO_NO_PERMITIDO` con `Allow`.
 
-    **Sin autenticación ni CORS**, HTTP sin TLS. "Try it out" no anda desde el navegador: usar el
-    `curl` que muestra Swagger. No son públicos los mensajes entre nodos del Hit 3 (`/cluster/*`)
-    ni el servicio tarea.
+    **Autenticación por request:** `Authorization: Bearer <JWT>` (HS256 con `sub`, `role` y `exp`),
+    validada en cada llamada; el servidor no guarda sesión. Roles `usuario` (ejecuta tareas) y `admin`
+    (además, `/stats`). Sin token → 401; rol insuficiente → 403; más de 300 pedidos por minuto de un
+    usuario → 429 con `Retry-After` (en el Hit 3, por nodo). Sólo `/health` es pública.
+
+    **Sin CORS**, HTTP sin TLS. "Try it out" no anda desde el navegador: usar el `curl` que muestra
+    Swagger. No son públicos los mensajes entre nodos del Hit 3 (`/cluster/*`) ni el servicio tarea.
+
+    Más detalle (tabla completa de errores, qué significa cada tiempo y "lo que falta") en
+    `contrato-publico.md`.
 servers:
   - url: http://18.231.127.74:8081
     description: Hit 1
@@ -27,7 +34,8 @@ servers:
     description: Hit 2
   - url: http://18.231.127.74:8083
     description: Hit 3 (nginx)
-security: []  # sin autenticación
+security:
+  - bearer: []
 paths:
   /getRemoteTask:
     post:
@@ -62,11 +70,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/RespuestaTarea'
               examples:
-                hit1: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7}}}
-                hit2: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7, lamport_ts: 12820}}}
-                hit3: {value: {codigo: 200, contenido: {calculo: suma, resultado: 7, nodo: 3}}}
+                hit1:
+                  value: {codigo: 200, contenido: {calculo: suma, resultado: 7, task_id: 5c4c664a-7bb9-4c17-a2f0-0315091e9944, imagen: 'docker.io/cerberusdistribuido/tarea-prueba:test', digest: 'sha256:70f35747b244103904729a3de71a1c677a3d1e42119bdb6a76a4b47760a440b4', imagen_id: 'sha256:70f35747b244103904729a3de71a1c677a3d1e42119bdb6a76a4b47760a440b4', contenedor: 1dc16e0a537b, tiempos: {en_cola_s: 0.0, ejecucion_s: 0.5529, total_s: 0.6799}}}
+                hit2:
+                  value: {codigo: 200, contenido: {calculo: suma, resultado: 7, task_id: ae3eb90e-c773-4217-a332-76ee96c70229, imagen: 'docker.io/cerberusdistribuido/tarea-prueba:test', digest: 'sha256:70f35747b244103904729a3de71a1c677a3d1e42119bdb6a76a4b47760a440b4', imagen_id: 'sha256:70f35747b244103904729a3de71a1c677a3d1e42119bdb6a76a4b47760a440b4', contenedor: 8fd786f5c50b, tiempos: {en_cola_s: 0.0001, ejecucion_s: 0.3432, total_s: 0.4634}, lamport_ts: 4}}
+                hit3:
+                  value: {codigo: 200, contenido: {calculo: suma, resultado: 7, task_id: f99e3b04-dbc4-42bf-b161-e82de0b281c4, imagen: 'docker.io/cerberusdistribuido/tarea-prueba:test', digest: 'sha256:70f35747b244103904729a3de71a1c677a3d1e42119bdb6a76a4b47760a440b4', imagen_id: 'sha256:70f35747b244103904729a3de71a1c677a3d1e42119bdb6a76a4b47760a440b4', nodo: 2, contenedor: a4fbfbda587d, tiempos: {en_cola_s: 0.0024, ejecucion_s: 0.3418, total_s: 0.483}}}
         '400': {$ref: '#/components/responses/Error', description: 'Cuerpo vacío o JSON inválido: `CUERPO_VACIO`, `JSON_INVALIDO`.'}
-        '403': {$ref: '#/components/responses/Error', description: 'La imagen no está en la lista blanca, o no coincide con el digest que la lista fija: `IMAGEN_NO_PERMITIDA`.'}
+        '401':
+          $ref: '#/components/responses/Error'
+          description: '`NO_AUTORIZADO`: falta el token, no es un JWT, está firmado con otro secreto, no tiene `exp` o venció. Trae `WWW-Authenticate: Bearer`.'
+        '403': {$ref: '#/components/responses/Error', description: 'La imagen no está en la lista blanca, o no coincide con el digest que la lista fija (`IMAGEN_NO_PERMITIDA`); o el rol del token no es `usuario` ni `admin` (`ROL_INSUFICIENTE`).'}
         '413': {$ref: '#/components/responses/Error', description: 'Más de 64 KiB: `CUERPO_DEMASIADO_GRANDE`.'}
         '415': {$ref: '#/components/responses/Error', description: '`Content-Type` distinto de `application/json`: `TIPO_DE_CONTENIDO`.'}
         '422':
@@ -74,6 +88,9 @@ paths:
           description: |
             `PAYLOAD_INVALIDO` (con un elemento en `detalles` por problema), `IMAGEN_INEXISTENTE`,
             o `TAREA_RECHAZADA` (la tarea rechazó los parámetros; el motivo va en `mensaje`).
+        '429':
+          $ref: '#/components/responses/DemasiadosPedidos'
+          description: '`DEMASIADOS_PEDIDOS`: el usuario superó su límite de pedidos por minuto. Trae `Retry-After` (segundos).'
         '500': {$ref: '#/components/responses/Error', description: 'Error inesperado: `ERROR_INTERNO`.'}
         '502':
           $ref: '#/components/responses/Error'
@@ -84,9 +101,34 @@ paths:
             tareas no tienen efectos secundarios.
         '503': {$ref: '#/components/responses/Error', description: 'Docker no responde (`SERVICIO_NO_DISPONIBLE`) o, en el Hit 3, no hay coordinador ni nodos vivos (`CLUSTER_NO_DISPONIBLE`).'}
         '504': {$ref: '#/components/responses/Error', description: 'La tarea no arrancó o no contestó a tiempo: `TAREA_SIN_RESPUESTA`.'}
+  /stats:
+    get:
+      operationId: stats
+      summary: Estadísticas del servidor (sólo admin)
+      description: |
+        Tareas ejecutadas y fallidas, por imagen, latencia promedio y p95 (últimas 1000 tareas, cola
+        incluida), tareas en cola, workers ocupados y pedidos por código HTTP. Todo en memoria: se
+        reinicia con el servidor. En el Hit 3 los números son del cluster entero (el nodo que atiende
+        junta los de los tres; `nodos_sin_respuesta` dice cuáles no contestaron).
+      parameters:
+        - $ref: '#/components/parameters/XLamportClock'
+      responses:
+        '200':
+          description: Estadísticas.
+          headers:
+            X-Lamport-Clock:
+              $ref: '#/components/headers/XLamportClock'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stats'
+              example: {codigo: 200, contenido: {tareas_ejecutadas: 2, tareas_fallidas: 0, tareas_por_imagen: {'docker.io/cerberusdistribuido/tarea:test': {ejecutadas: 2, fallidas: 0}}, latencia_s: {promedio: 0.45, p95: 0.463, muestras: 2}, tareas_en_cola: 0, workers_ocupados: 0, workers_max: 4, pedidos_por_codigo: {'200': 2, '401': 3, '422': 5, '429': 1}, desde: '2026-10-16T02:55:15+00:00', uptime_s: 6, lamport_ts: 42}}
+        '401': {$ref: '#/components/responses/Error', description: '`NO_AUTORIZADO`: sin token, o token inválido o vencido.'}
+        '403': {$ref: '#/components/responses/Error', description: '`ROL_INSUFICIENTE`: el token es de un `usuario`; hace falta `admin`.'}
   /health:
     get:
       operationId: health
+      security: []   # pública: la usan el healthcheck y el despliegue
       summary: Estado del servidor ({servicio, estado})
       description: '`200` si puede ejecutar tareas; `503` si Docker no responde. En el Hit 3 contesta el nodo que elige nginx.'
       parameters:
@@ -115,6 +157,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
 components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'JWT HS256 con `sub` (usuario), `role` (`usuario` o `admin`) y `exp`. Se emite con `evidencias/emitir_token.py`.'
   parameters:
     XLamportClock:
       name: X-Lamport-Clock
@@ -126,6 +174,19 @@ components:
       description: Sólo Hit 2, en toda respuesta. Reloj de Lamport del servidor al contestar.
       schema: {type: integer, minimum: 1}
   responses:
+    DemasiadosPedidos:
+      description: Límite de pedidos por minuto superado.
+      headers:
+        Retry-After:
+          description: Segundos hasta que se le repone un pedido.
+          schema: {type: integer, minimum: 1}
+        X-Lamport-Clock:
+          $ref: '#/components/headers/XLamportClock'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {codigo: 429, contenido: {error: {tipo: DEMASIADOS_PEDIDOS, mensaje: 'más de 300 pedidos por minuto para ana: reintentá en 1 s', detalles: []}}}
     Error:
       description: Error, en el sobre.
       headers:
@@ -164,10 +225,22 @@ components:
         codigo: {type: integer, const: 200}
         contenido:
           type: object
-          required: [calculo, resultado]
+          required: [calculo, resultado, task_id, imagen, digest, imagen_id, contenedor, tiempos]
           properties:
             calculo: {type: string}
             resultado: {description: Lo que devolvió la tarea; cualquier valor JSON.}
+            task_id: {type: string, format: uuid, description: Identificador de la tarea; también está en el log del servidor.}
+            imagen: {type: string, description: 'Imagen ejecutada, normalizada (`docker.io/repo:tag`).'}
+            digest: {type: [string, 'null'], description: 'Digest del registry (`sha256:…`) de la imagen ejecutada; `null` si no vino de un registry.'}
+            imagen_id: {type: string, description: 'ID local de la imagen (`sha256:…`): identifica el contenido exacto que corrió.'}
+            contenedor: {type: string, description: ID corto (12 caracteres) del contenedor que atendió la tarea. Se borra al terminar.}
+            tiempos:
+              type: object
+              required: [en_cola_s, ejecucion_s, total_s]
+              properties:
+                en_cola_s: {type: number, description: 'Espera antes de empezar. Hit 2: en la cola, esperando un worker. Hit 3: pidiendo nodo al coordinador. Hit 1: siempre 0.'}
+                ejecucion_s: {type: number, description: Desde crear el contenedor hasta tener la respuesta de la tarea.}
+                total_s: {type: number, description: 'Desde que el servidor empezó a atender el pedido hasta tener la respuesta (validación, descarga de la imagen, cola y ejecución).'}
             lamport_ts: {type: integer, description: Sólo Hit 2. Igual a la cabecera `X-Lamport-Clock`.}
             nodo: {type: integer, description: Sólo Hit 3. ID del nodo que ejecutó la tarea.}
     Health:
@@ -220,7 +293,8 @@ components:
               properties:
                 tipo:
                   type: string
-                  enum: [CUERPO_VACIO, JSON_INVALIDO, IMAGEN_NO_PERMITIDA, RUTA_INEXISTENTE, METODO_NO_PERMITIDO,
+                  enum: [CUERPO_VACIO, JSON_INVALIDO, NO_AUTORIZADO, ROL_INSUFICIENTE, DEMASIADOS_PEDIDOS,
+                         IMAGEN_NO_PERMITIDA, RUTA_INEXISTENTE, METODO_NO_PERMITIDO,
                          CUERPO_DEMASIADO_GRANDE, TIPO_DE_CONTENIDO, PAYLOAD_INVALIDO, IMAGEN_INEXISTENTE,
                          TAREA_RECHAZADA, ERROR_INTERNO, TAREA_FALLIDA, REGISTRY_NO_DISPONIBLE,
                          SERVICIO_NO_DISPONIBLE, TAREA_SIN_RESPUESTA, NODO_NO_DISPONIBLE, CLUSTER_NO_DISPONIBLE]
@@ -233,3 +307,49 @@ components:
                     properties:
                       campo: {type: string}
                       problema: {type: string}
+    Stats:
+      type: object
+      required: [codigo, contenido]
+      properties:
+        codigo: {type: integer, const: 200}
+        contenido:
+          type: object
+          required: [tareas_ejecutadas, tareas_fallidas, tareas_por_imagen, latencia_s, tareas_en_cola, workers_ocupados, workers_max, pedidos_por_codigo]
+          properties:
+            tareas_ejecutadas: {type: integer, description: Terminaron bien en su contenedor.}
+            tareas_fallidas: {type: integer, description: 'Llegaron a ejecutarse y terminaron mal (la tarea rechazó los parámetros, falló, no contestó, no se pudo bajar la imagen).'}
+            tareas_por_imagen:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  ejecutadas: {type: integer}
+                  fallidas: {type: integer}
+            latencia_s:
+              type: object
+              description: Tiempo total de la tarea, cola incluida, sobre las últimas 1000 tareas.
+              properties:
+                promedio: {type: [number, 'null']}
+                p95: {type: [number, 'null']}
+                muestras: {type: integer}
+            tareas_en_cola: {type: integer, description: 'Hit 2: la cola del pool. Hits 1 y 3: siempre 0.'}
+            workers_ocupados: {type: integer, description: 'Hit 2: workers del pool en uso. Hits 1 y 3: tareas en curso.'}
+            workers_max: {type: [integer, 'null'], description: 'Hit 2: el tope del pool. Hits 1 y 3: null.'}
+            pedidos_por_codigo:
+              type: object
+              description: Pedidos a `/getRemoteTask` por código HTTP, incluidos los rechazados antes de ejecutar.
+              additionalProperties: {type: integer}
+            desde: {type: string, format: date-time}
+            uptime_s: {type: integer}
+            lamport_ts: {type: integer, description: Sólo Hit 2.}
+            nodos:
+              description: Sólo Hit 3. El desglose por nodo.
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  tareas_ejecutadas: {type: integer}
+                  tareas_fallidas: {type: integer}
+                  workers_ocupados: {type: integer}
+            nodos_sin_respuesta: {type: array, items: {type: integer}, description: 'Sólo Hit 3. Nodos que no contestaron: los totales son parciales.'}
+            atendido_por: {type: integer, description: Sólo Hit 3. El nodo que armó esta respuesta.}

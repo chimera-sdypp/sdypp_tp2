@@ -1,4 +1,5 @@
 import threading
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -7,7 +8,7 @@ from docker.errors import APIError, DockerException, NotFound
 from app.config import Config
 from app.errores import ErrorApi, TipoError
 from app.imagenes import parsear
-from app.lanzador import Lanzador, SinConexion, Vencido, http_json
+from app.lanzador import Lanzador, SinConexion, Vencido, _digest_ejecutado, http_json
 from dobles import DockerFalso, HttpFalso, RelojFalso, logger_silencioso, sobre
 
 IMAGEN = parsear("cerberusdistribuido/tarea:1.0")
@@ -37,7 +38,7 @@ def _falla(lanzador, imagen=IMAGEN):
 def test_devuelve_el_resultado_y_borra_el_contenedor():
     http = HttpFalso()
     lanzador, docker_falso = _lanzador(http=http)
-    assert _ejecutar(lanzador) == 7
+    assert _ejecutar(lanzador).resultado == 7
     [contenedor] = docker_falso.creados
     assert contenedor.imagen == "docker.io/cerberusdistribuido/tarea:1.0"
     assert contenedor.network == "tp2-tareas"
@@ -90,6 +91,31 @@ def test_errores_de_descarga(error, tipo):
     lanzador, _ = _lanzador(docker_falso)
     assert _falla(lanzador).tipo is tipo
     assert docker_falso.creados == []
+
+
+# ---------------------------------------------------------------- metadata de la ejecución (R3)
+def test_devuelve_con_que_se_ejecuto():
+    lanzador, _ = _lanzador(DockerFalso(presentes={IMAGEN.referencia}, digests=[DIGEST]))
+    ejecucion = _ejecutar(lanzador)
+    assert (ejecucion.resultado, ejecucion.contenedor) == (7, "abc123")
+    assert ejecucion.imagen_id == "sha256:" + "a" * 64
+    assert ejecucion.digest == DIGEST
+    assert 0 <= ejecucion.ejecucion_s < 5
+
+
+def test_una_imagen_sin_repo_digest_no_tiene_digest_pero_si_id():
+    lanzador, _ = _lanzador()          # presente, sin RepoDigests: como una imagen construida en el host
+    ejecucion = _ejecutar(lanzador)
+    assert ejecucion.digest is None
+    assert ejecucion.imagen_id.startswith("sha256:")
+
+
+def test_el_digest_ejecutado_es_el_del_repositorio_pedido():
+    otra = "sha256:" + "c" * 64
+    local = SimpleNamespace(attrs={"RepoDigests": [f"otro/repo@{otra}", f"cerberusdistribuido/tarea@{DIGEST}"]})
+    assert _digest_ejecutado(IMAGEN, local) == DIGEST
+    assert _digest_ejecutado(IMAGEN, SimpleNamespace(attrs={"RepoDigests": [f"otro/repo@{otra}"]})) == otra
+    assert _digest_ejecutado(IMAGEN, SimpleNamespace(attrs={})) is None
 
 
 # ---------------------------------------------------------------- preparar_imagen (R2)
@@ -194,9 +220,12 @@ class _Handler(BaseHTTPRequestHandler):
         estado, cuerpo = {"/ok": (200, b'{"a": 1}'), "/roto": (200, b"no es json"),
                           "/rechazo": (422, b'{"b": 2}')}.get(self.path, (200, b"{}"))
         self.send_response(estado)
-        self.send_header("Content-Length", str(len(cuerpo)))
-        self.end_headers()
-        self.wfile.write(cuerpo)
+        try:
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.end_headers()
+            self.wfile.write(cuerpo)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def log_message(self, *args):
         pass

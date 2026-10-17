@@ -4,6 +4,8 @@ import logging
 
 from docker.errors import APIError, ImageNotFound
 
+from app.lanzador import Ejecucion
+
 
 class RelojFalso:
     def __init__(self):
@@ -17,10 +19,11 @@ class RelojFalso:
 
 
 class ContenedorFalso:
-    def __init__(self, imagen, network, falla_start=False, termina=False):
+    def __init__(self, imagen, network, falla_start=False, termina=False, **kwargs):
         self.id = "abc123"
         self.imagen = imagen
         self.network = network
+        self.kwargs = kwargs
         self.falla_start = falla_start
         # termina: la imagen no es un servicio tarea y el proceso sale enseguida.
         self.status = "exited" if termina else "running"
@@ -39,8 +42,14 @@ class ContenedorFalso:
         self.borrado = True
 
 
+def ejecucion(resultado):
+    """Lo que devuelve `Lanzador.ejecutarTareaRemota()`."""
+    return Ejecucion(resultado, "c0ffee123456", "sha256:" + "a" * 64, "sha256:" + "b" * 64, 0.01)
+
+
 class ImagenFalsa:
     def __init__(self, digests):
+        self.id = "sha256:" + "a" * 64
         self.attrs = {"RepoDigests": [f"cerberusdistribuido/tarea@{d}" for d in digests]}
 
 
@@ -72,8 +81,8 @@ class DockerFalso:
             raise self.error_pull
         return ImagenFalsa(self.digests)
 
-    def create(self, imagen, network=None):
-        contenedor = ContenedorFalso(imagen, network, self.falla_start, self.termina)
+    def create(self, imagen, network=None, **kwargs):
+        contenedor = ContenedorFalso(imagen, network, self.falla_start, self.termina, **kwargs)
         self.creados.append(contenedor)
         return contenedor
 
