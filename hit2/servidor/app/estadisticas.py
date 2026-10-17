@@ -1,13 +1,22 @@
-"""Contadores de `/stats` (R4), en memoria y sin sesión: se reinician con el servidor.
+"""Módulo de Observabilidad y Métricas para `/stats` (Requisito R4).
 
-Una tarea "ejecutada" es la que terminó bien en su contenedor; "fallida", la que llegó a
-ejecutarse y terminó mal (la tarea rechazó los parámetros, falló, no contestó, no se pudo
-bajar la imagen...). Los pedidos que se rechazan antes de ejecutar (401, 403, 413, 422 de
-validación...) no son tareas: están en `pedidos_por_codigo`. La latencia es el tiempo
-total de la tarea, cola incluida, sobre las últimas `ventana` tareas.
-
-`exportar()` da el estado crudo y `resumir()` lo convierte en la respuesta: el Hit 3 junta
-el estado de sus tres nodos y lo resume una sola vez.
+Principios Fundamentales de Observabilidad:
+1. EXPOSICIÓN RESTRINGIDA (RBAC): El endpoint `/stats` solo es accesible por usuarios
+   con rol `admin`. Un usuario común (`rol=usuario`) es rechazado con HTTP 403 ROL_INSUFICIENTE.
+2. OBSERVABILIDAD STATELESS Y VOLÁTIL: Las métricas residen exclusivamente en memoria
+   del proceso del servidor. No requieren bases de datos externas ni persistencia en disco,
+   reiniciándose limpiamente con el ciclo de vida del contenedor.
+3. DISCRIMINACIÓN DE ERRORES:
+   - `pedidos_por_codigo`: Contabiliza todas las respuestas HTTP (200, 401, 403, 429, etc.).
+     Permite auditar intentos de acceso no autorizado y desbordes del limitador de tasa.
+   - `tareas_ejecutadas` vs `tareas_fallidas`: Registra el resultado real dentro del contenedor
+     de cálculo (ej. si la tarea remota completó el cómputo o lanzó una excepción interna).
+4. LATENCIA Y PERCENTILES (P95):
+   - Mantiene una ventana deslizante acotada (`collections.deque(maxlen=ventana)`) de tiempos.
+   - Calcula tanto la latencia promedio como el Percentil 95 (P95), métrica industrial estándar
+     para diagnosticar degradación de servicio bajo contención de cola.
+5. HILO-SEGURIDAD: Todas las modificaciones y lecturas están protegidas por un cerrojo
+   (`threading.Lock`), permitiendo que múltiples hilos del pool actualicen métricas concurrentemente.
 """
 
 import math
@@ -17,8 +26,11 @@ from collections import Counter, deque
 from datetime import datetime, timezone
 
 
-def resumir(exportaciones):
-    """Junta el estado de uno o más nodos en los números de `/stats`."""
+def resumir(exportaciones: list[dict]) -> dict:
+    """Agrega y consolida el estado de métricas de uno o varios nodos en la respuesta de `/stats`.
+    
+    En Hit 2 opera sobre el nodo local. En Hit 3 permite consolidar métricas de todo el cluster.
+    """
     por_imagen, por_codigo, latencias = {}, Counter(), []
     ejecutadas = fallidas = 0
     for e in exportaciones:
@@ -30,14 +42,21 @@ def resumir(exportaciones):
                 total[clave] += n
         por_codigo.update(e["por_codigo"])
         latencias.extend(e["latencias"])
+    
     latencias.sort()
+    # Percentil 95: el tiempo por debajo del cual se resolvió el 95% de las tareas observadas
+    p95_valor = (
+        round(latencias[math.ceil(0.95 * len(latencias)) - 1], 3)
+        if latencias else None
+    )
+
     return {
         "tareas_ejecutadas": ejecutadas,
         "tareas_fallidas": fallidas,
         "tareas_por_imagen": dict(sorted(por_imagen.items())),
         "latencia_s": {
             "promedio": round(sum(latencias) / len(latencias), 3) if latencias else None,
-            "p95": round(latencias[math.ceil(0.95 * len(latencias)) - 1], 3) if latencias else None,
+            "p95": p95_valor,
             "muestras": len(latencias),
         },
         "pedidos_por_codigo": dict(sorted(por_codigo.items())),
@@ -45,7 +64,14 @@ def resumir(exportaciones):
 
 
 class Estadisticas:
-    def __init__(self, ventana=1000):
+    """Recolector de telemetría y métricas operativas del servidor."""
+
+    def __init__(self, ventana: int = 1000):
+        """Inicializa los acumuladores y la ventana móvil de latencias.
+        
+        Args:
+            ventana: Cantidad máxima de muestras de latencia retenidas en el deque.
+        """
         self._candado = threading.Lock()
         self._ejecutadas = 0
         self._fallidas = 0
@@ -55,7 +81,8 @@ class Estadisticas:
         self._desde = datetime.now(timezone.utc)
         self._inicio = time.monotonic()
 
-    def registrar_tarea(self, imagen, ok, latencia_s):
+    def registrar_tarea(self, imagen: str, ok: bool, latencia_s: float) -> None:
+        """Registra la finalización de una tarea ejecutada por un worker en su contenedor."""
         with self._candado:
             if ok:
                 self._ejecutadas += 1
@@ -65,22 +92,30 @@ class Estadisticas:
             por_imagen["ejecutadas" if ok else "fallidas"] += 1
             self._latencias.append(latencia_s)
 
-    def registrar_pedido(self, codigo):
+    def registrar_pedido(self, codigo: int) -> None:
+        """Registra el código de estado HTTP devuelto a un cliente (ej. 200, 401, 403, 429)."""
         with self._candado:
             self._por_codigo[str(codigo)] += 1
 
-    def exportar(self):
-        """El estado crudo, serializable: lo que un nodo le manda al que arma `/stats`."""
+    def exportar(self) -> dict:
+        """Extrae una instantánea serializable del estado crudo interno bajo lock."""
         with self._candado:
-            return {"ejecutadas": self._ejecutadas, "fallidas": self._fallidas,
-                    "por_imagen": {i: dict(c) for i, c in self._por_imagen.items()},
-                    "latencias": list(self._latencias), "por_codigo": dict(self._por_codigo)}
+            return {
+                "ejecutadas": self._ejecutadas,
+                "fallidas": self._fallidas,
+                "por_imagen": {i: dict(c) for i, c in self._por_imagen.items()},
+                "latencias": list(self._latencias),
+                "por_codigo": dict(self._por_codigo)
+            }
 
-    def instantanea(self, pool):
-        """`/stats` de un servidor solo; `pool` aporta cola y workers."""
-        return {**resumir([self.exportar()]),
-                "tareas_en_cola": pool.tareas_encoladas,
-                "workers_ocupados": pool.workers_activos,
-                "workers_max": pool.workers_max,
-                "desde": self._desde.isoformat(timespec="seconds"),
-                "uptime_s": round(time.monotonic() - self._inicio)}
+    def instantanea(self, pool) -> dict:
+        """Genera el JSON final para el endpoint `/stats` combinando métricas con el estado del pool."""
+        return {
+            **resumir([self.exportar()]),
+            "tareas_en_cola": pool.tareas_encoladas,
+            "workers_ocupados": pool.workers_activos,
+            "workers_max": pool.workers_max,
+            "desde": self._desde.isoformat(timespec="seconds"),
+            "uptime_s": round(time.monotonic() - self._inicio)
+        }
+

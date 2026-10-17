@@ -43,10 +43,24 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
     rutas_publicas = {"/health"}
     roles_por_ruta = {"/stats": {auth.ROL_ADMIN}}
 
+    # --------------------------------------------------------------------------
+    # 1. Middleware de Autenticación y Control de Acceso (Requisito R4)
+    # --------------------------------------------------------------------------
     @app.middleware("http")
     async def autenticacion(request: Request, call_next):
-        """Cada pedido trae su identidad: se valida el token, el rol de la ruta y el límite
-        por usuario, todo antes de leer el cuerpo y de encolar nada."""
+        """Valida identidad, privilegios de rol (RBAC) y cuota de tasa (Token Bucket).
+        
+        Secuencia de Control Fail-Closed:
+        1. Si la ruta es pública (`/health`), pasa sin autenticar.
+        2. Extrae y valida el JWT (`Authorization: Bearer <token>`). Si falta, expiró
+           o la firma no coincide, aborta de inmediato con HTTP 401 NO_AUTORIZADO.
+        3. Valida el rol del usuario contra la ruta solicitada:
+           - `/stats` exige estrictamente rol `admin`. Si un `usuario` intenta acceder,
+             se rechaza con HTTP 403 ROL_INSUFICIENTE antes de consultar métricas.
+        4. Si es un POST a `/getRemoteTask`, consulta el limitador de tasa Token Bucket.
+           Si el usuario superó su cuota de `limite_pedidos_min`, rechaza con
+           HTTP 429 DEMASIADOS_PEDIDOS e incluye la cabecera estándar `Retry-After`.
+        """
         ruta = request.url.path
         if ruta in rutas_publicas:
             return await call_next(request)
@@ -143,8 +157,25 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
                            interno=f"digests de la imagen: {sorted(digests) or 'ninguno'}")
         return imagen
 
+    # --------------------------------------------------------------------------
+    # 2. Endpoint de Ejecución de Tareas Remotas (Requisitos R3, R4 y R5)
+    # --------------------------------------------------------------------------
     @app.post("/getRemoteTask")
     async def getRemoteTask(request: Request):  # noqa: N802 (nombre del enunciado)
+        """Recepciona, valida y despacha una tarea remota al pool de workers.
+        
+        Flujo de Ejecución Desacoplado:
+        1. CONTROL PREVIO (Fail-Fast): Valida tamaño del cuerpo, sintaxis JSON y whitelist
+           de imágenes ANTES de encolar. Una petición inválida se rechaza en microsegundos y
+           nunca consume memoria en la cola ni ocupa un hilo worker.
+        2. DESACOPLAMIENTO TEMPORAL: La tarea se ingresa en el `PoolWorkers` con el timestamp
+           lógico de Lamport del cliente (`ts_solicitud`). Si todos los workers están ocupados,
+           la petición espera en la Min-Heap sin saturar hilos ni rechazar la conexión.
+        3. MÉTRICAS DIFERENCIADAS (R5):
+           - `en_cola_s`: Tiempo de espera en la cola hasta que un worker libre la toma.
+           - `ejecucion_s`: Tiempo neto de cómputo dentro del contenedor Docker aislado.
+           - `total_s`: Latencia total percibida por el cliente HTTP.
+        """
         inicio_total = time.perf_counter()
         task_id = str(uuid.uuid4())
         cuerpo = await request.body()
@@ -192,9 +223,16 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             cabeceras={"X-Lamport-Clock": str(ts_respuesta)}
         )
 
+    # --------------------------------------------------------------------------
+    # 3. Endpoint de Observabilidad y Telemetría (Requisito R4)
+    # --------------------------------------------------------------------------
     @app.get("/stats")
     def stats():
-        """Estadísticas del servidor, sólo para el rol admin (lo exige el middleware)."""
+        """Devuelve telemetría operativa en vivo (exclusivo para usuarios con rol `admin`).
+        
+        Incluye tareas ejecutadas, fallidas, ventana de latencias con percentil P95,
+        distribución por imagen, estado del pool de workers y cola de Lamport.
+        """
         ts_respuesta = reloj.incrementar()
         return responder(200, {**estadisticas.instantanea(pool), "lamport_ts": ts_respuesta},
                          cabeceras={"X-Lamport-Clock": str(ts_respuesta)})

@@ -125,6 +125,21 @@ class Lanzador:
         return {d.partition("@")[2] for d in local.attrs.get("RepoDigests") or []}
 
     def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802 (nombre del enunciado)
+        """Ejecuta una tarea remota instanciando un contenedor efímero aislado (Requisito R5).
+        
+        Principios de Aislamiento y Contención de Recursos:
+        1. LÍMITES DE HARDWARE ESTRICTOS (cgroups):
+           - `nano_cpus`: Convierte el valor en cores a nanosegundos de CPU para el kernel Linux.
+             Si `tarea_cpus=1.0`, se fija `nano_cpus=1_000_000_000`. Esto previene que una tarea
+             intensiva en cómputo monopolice los núcleos del procesador físico del host.
+           - `mem_limit`: Acota la memoria física máxima (ej. '256m') evitando que una tarea con
+             fugas de memoria dispare el OOM-Killer sobre el servidor principal.
+        2. CREACIÓN ATÓMICA Y LIMPIEZA GARANTIZADA:
+           - Se ejecuta `containers.create()` seguido de `start()`: si la inicialización falla,
+             tenemos la referencia al objeto para destruirlo en el bloque `finally:`.
+           - El bloque `finally:` asegura la destrucción inmediata del contenedor (`remove(force=True)`),
+             impidiendo la acumulación de contenedores zombie y fugas de descriptores en Docker.
+        """
         cliente = self._docker()
         local = self._asegurar_imagen(cliente, imagen)
         contenedor = None
@@ -135,6 +150,7 @@ class Lanzador:
             kwargs_crear = {
                 "network": self._config.red_tareas,
             }
+            # Requisito R5: Inyección de límites de hardware en el motor de Docker
             if getattr(self._config, "tarea_mem_limit", None):
                 kwargs_crear["mem_limit"] = self._config.tarea_mem_limit
             if getattr(self._config, "tarea_cpus", None) and self._config.tarea_cpus > 0:
@@ -158,6 +174,7 @@ class Lanzador:
                     contenedor.remove(force=True)
                 except _SIN_DOCKER as error:
                     self._log.warning("no se pudo borrar el contenedor %s: %s", contenedor.id, error)
+
 
     def _asegurar_imagen(self, cliente, imagen):
         """Descarga la imagen si no está en el host, con las credenciales del
