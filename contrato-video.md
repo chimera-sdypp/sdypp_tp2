@@ -271,6 +271,9 @@ No hace falta para usar la API. Es para los que implementan el servidor y la ima
   `TP2_VIDEO_TIMEOUT` (60 min), y la memoria y la CPU son `TP2_VIDEO_MEM_LIMIT` (2g) y
   `TP2_VIDEO_CPUS` (2). Con los 256 MB y la CPU de las tareas de cálculo, un ffmpeg con entrada 4K se
   queda sin memoria. Los 60 s siguen valiendo solo para los cálculos.
+- **La tarea usa tantos hilos como CPU le da Docker.** Los lee del cgroup (`/sys/fs/cgroup/cpu.max`),
+  no del host. Si ffmpeg usara los 16 núcleos del host, un 4K a 5 calidades pasaría de 1 GiB. Con 2
+  hilos el pico medido es de 755 MiB.
 - **La imagen tiene que estar en `TP2_IMAGENES_PERMITIDAS`**, como cualquier otra: el servidor la
   valida y la baja con el mismo código de R1/R2.
 - **Al arrancar, el servidor revisa `/trabajos`.** Los trabajos que estaban `en_cola` o `procesando`
