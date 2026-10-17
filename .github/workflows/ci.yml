@@ -23,6 +23,27 @@ jobs:
             | tar -xz gitleaks
           ./gitleaks git --redact -v .
 
+  tarea-video:
+    name: Servicio tarea-video — tests con ffmpeg
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tarea-video
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"   # el de Debian trixie, la base de la imagen
+      - name: Instalar ffmpeg y pytest
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends ffmpeg
+          pip install pytest
+      # Los videos de prueba se generan en el momento con ffmpeg (testsrc).
+      - name: Tests
+        run: python -m pytest -v
+      - name: Construir la imagen
+        run: docker build -t cerberusdistribuido/tarea-video:ci .
+
   hit1-unitarios:
     name: Hit 1 — tests unitarios y de API
     runs-on: ubuntu-latest
