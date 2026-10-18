@@ -15,6 +15,17 @@ services:
       TP2_REGISTRY_USUARIO: ${TP2_REGISTRY_USUARIO:-}
       TP2_LIMITE_PEDIDOS_MIN: ${TP2_LIMITE_PEDIDOS_MIN:-300}
 
+      # Transcodificación asíncrona de video (Hits 2 y 3)
+      TP2_VIDEO_IMAGEN: ${TP2_VIDEO_IMAGEN:-cerberusdistribuido/tarea-video:1.0.0}
+      TP2_VIDEO_DIR: /trabajos
+      TP2_VIDEO_WORKERS_MAX: ${TP2_VIDEO_WORKERS_MAX:-2}
+      TP2_VIDEO_COLA_MAX: ${TP2_VIDEO_COLA_MAX:-20}
+      TP2_VIDEO_TRABAJOS_POR_USUARIO_MAX: ${TP2_VIDEO_TRABAJOS_POR_USUARIO_MAX:-3}
+      TP2_VIDEO_TIMEOUT: ${TP2_VIDEO_TIMEOUT:-3600}
+      TP2_VIDEO_MEM_LIMIT: ${TP2_VIDEO_MEM_LIMIT:-2g}
+      TP2_VIDEO_CPUS: ${TP2_VIDEO_CPUS:-2.0}
+      TP2_VIDEO_RETENCION_HORAS: ${TP2_VIDEO_RETENCION_HORAS:-24}
+
       # Los secretos llegan como archivo y no como variable: no aparecen en `docker inspect`.
       TP2_REGISTRY_TOKEN_ARCHIVO: /run/secrets/registry_token
       TP2_JWT_SECRET_ARCHIVO: /run/secrets/jwt_secret
@@ -27,6 +38,8 @@ services:
       # Para crear los contenedores tarea le habla al daemon del host por su socket.
       - /var/run/docker.sock:/var/run/docker.sock
       - logs:/app/logs
+      # Volumen compartido para transcodificación de video (Contrato § Anexo)
+      - tp2-videos:/trabajos
     group_add:
       - "${DOCKER_GID:?definir DOCKER_GID en .env: stat -c %g /var/run/docker.sock}"
     networks:
@@ -41,6 +54,8 @@ networks:
 
 volumes:
   logs: {}
+  tp2-videos:
+    name: tp2-videos
 
 secrets:
   # Con qué se firman los JWT de los clientes. Sin él (o de menos de 32 caracteres) el servidor

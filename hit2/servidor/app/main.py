@@ -8,8 +8,11 @@ import math
 import time
 import uuid
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import auth, imagenes, registro
@@ -21,15 +24,18 @@ from app.lanzador import Lanzador
 from app.limitador import LimitadorPorUsuario
 from app.pool import PoolWorkers
 from app.validacion import validar_solicitud
+from app.video_servicio import VideoServicio
 
 
-def crear_app(config=None, lanzador=None, reloj=None, pool=None):
+def crear_app(config=None, lanzador=None, reloj=None, pool=None, video_pool=None, video_servicio=None):
     config = config or Config.desde_entorno()
     auth.validar_secreto(config.jwt_secreto)
     log, _ = registro.configurar(config.dir_logs)
     lanzador = lanzador or Lanzador(config, log)
     reloj = reloj or RelojLamport()
     pool = pool or PoolWorkers(lanzador, config.workers_max, log)
+    video_pool = video_pool or PoolWorkers(lanzador, config.video_workers_max, log, cola_max=config.video_cola_max)
+    video_servicio = video_servicio or VideoServicio(config, video_pool, lanzador, log)
     estadisticas = Estadisticas()
     limitador = LimitadorPorUsuario(config.limite_pedidos_min)
     permitidas = imagenes.lista_blanca(config.imagenes_permitidas)
@@ -70,7 +76,7 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
             if permitidos and identidad.rol not in permitidos:
                 raise ErrorApi(TipoError.ROL_INSUFICIENTE,
                                f"{ruta} es sólo para {'/'.join(sorted(permitidos))} (tu rol: {identidad.rol})")
-            if ruta == "/getRemoteTask" and request.method == "POST":
+            if ruta in ("/getRemoteTask", "/videos") and request.method == "POST":
                 espera = limitador.reservar(identidad.usuario)
                 if espera:
                     reintentar = math.ceil(espera)
@@ -251,9 +257,170 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None):
                     "workers_max": pool.workers_max,
                     "tareas_encoladas": pool.tareas_encoladas
                 },
+                "videos": {
+                    "en_cola": video_pool.tareas_encoladas,
+                    "procesando": video_pool.workers_activos,
+                    "max_simultaneos": config.video_workers_max,
+                    "max_en_cola": config.video_cola_max,
+                },
                 "lamport_ts": ts_respuesta
             },
             cabeceras={"X-Lamport-Clock": str(ts_respuesta)}
+        )
+
+    # --------------------------------------------------------------------------
+    # 4. Endpoints de Transcodificación Asíncrona de Video (Hits 2 y 3)
+    # --------------------------------------------------------------------------
+    @app.post("/videos")
+    async def crear_video(request: Request):
+        """Acepta un trabajo de transcodificación (202 Accepted) con validación previa estricta."""
+        identidad = request.state.identidad
+        ts_solicitud = request.state.ts_cliente
+
+        ct = request.headers.get("content-type", "")
+        if not ct.startswith("multipart/form-data") and not ct.startswith("application/json"):
+            raise ErrorApi(
+                TipoError.TIPO_DE_CONTENIDO,
+                "tipo de contenido no soportado, se requiere multipart/form-data o application/json"
+            )
+
+        # Control de cola saturada antes de recibir el cuerpo
+        if video_pool.cola_max > 0 and video_pool.tareas_encoladas >= video_pool.cola_max:
+            raise ErrorApi(
+                TipoError.SERVICIO_SATURADO,
+                f"cola saturada ({video_pool.tareas_encoladas} trabajos en espera, máximo {video_pool.cola_max})",
+                cabeceras={"Retry-After": "30"}
+            )
+
+        # Reserva atómica previa de cuota (R3): previene carreras TOCTOU antes de procesar el cuerpo
+        id_trabajo = uuid.uuid4().hex
+        video_servicio.reservar_cuota_usuario(identidad.usuario, id_trabajo)
+        dir_trabajo = os.path.join(config.video_dir, id_trabajo)
+
+        try:
+            if ct.startswith("multipart/form-data"):
+                nombre_archivo, bytes_totales, calidades_str = await video_servicio.recibir_video_multipart(
+                    request, dir_trabajo
+                )
+                calidades = video_servicio.validar_calidades(calidades_str)
+                ruta_entrada = os.path.join(dir_trabajo, "entrada")
+                meta_video = await run_in_threadpool(
+                    video_servicio.validar_metadatos_video, ruta_entrada, calidades
+                )
+                trabajo = video_servicio.crear_trabajo(
+                    usuario=identidad.usuario,
+                    nombre_archivo=nombre_archivo,
+                    bytes_totales=bytes_totales,
+                    meta_video=meta_video,
+                    calidades=calidades,
+                    ts_solicitud=ts_solicitud,
+                    id_trabajo=id_trabajo,
+                )
+            else:
+                # application/json (modo URL)
+                cuerpo_bytes = await request.body()
+                if not cuerpo_bytes:
+                    raise ErrorApi(TipoError.CUERPO_VACIO, "el cuerpo no puede estar vacío")
+                import json
+                try:
+                    datos = json.loads(cuerpo_bytes)
+                except Exception:
+                    raise ErrorApi(TipoError.JSON_INVALIDO, "JSON mal formado")
+                if not isinstance(datos, dict):
+                    raise ErrorApi(TipoError.JSON_INVALIDO, "se esperaba un objeto JSON")
+
+                if "video" in datos and "url" in datos:
+                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "no se pueden enviar 'video' y 'url' simultáneamente")
+                if "url" not in datos:
+                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "falta el campo 'url'", detalles=["url"])
+                if "calidades" not in datos:
+                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "falta el campo 'calidades'", detalles=["calidades"])
+
+                for k in datos:
+                    if k not in ("url", "calidades"):
+                        raise ErrorApi(TipoError.PAYLOAD_INVALIDO, f"campo no permitido: {k}", detalles=[k])
+
+                url = datos["url"]
+                if not isinstance(url, str) or not url.strip():
+                    raise ErrorApi(TipoError.URL_INVALIDA, "la URL no puede estar vacía")
+
+                calidades = video_servicio.validar_calidades(datos["calidades"])
+                meta_video = await run_in_threadpool(
+                    video_servicio.validar_url_y_metadatos, url, calidades
+                )
+                trabajo = video_servicio.crear_trabajo(
+                    usuario=identidad.usuario,
+                    nombre_archivo=meta_video["nombre"],
+                    bytes_totales=meta_video["bytes"],
+                    meta_video=meta_video,
+                    calidades=calidades,
+                    ts_solicitud=ts_solicitud,
+                    id_trabajo=id_trabajo,
+                    url=url,
+                )
+        except Exception:
+            # En caso de cualquier error durante recepción o validación, liberar cuota y limpiar disco
+            video_servicio.liberar_cuota_usuario(identidad.usuario, id_trabajo)
+            import shutil
+            shutil.rmtree(dir_trabajo, ignore_errors=True)
+            raise
+
+        ts_respuesta = reloj.incrementar()
+        trabajo["lamport_ts"] = ts_respuesta
+        return responder(
+            202,
+            trabajo,
+            cabeceras={
+                "Location": f"/videos/{trabajo['id']}",
+                "X-Lamport-Clock": str(ts_respuesta)
+            }
+        )
+
+    @app.get("/videos/{id_trabajo}")
+    def consultar_video(id_trabajo: str, request: Request):
+        """Consulta el estado del trabajo respetando propiedad y agregando Retry-After."""
+        identidad = request.state.identidad
+        es_admin = identidad.rol == auth.ROL_ADMIN
+        contenido, retry_after = video_servicio.consultar_trabajo(
+            id_trabajo=id_trabajo,
+            usuario_solicitante=identidad.usuario,
+            es_admin=es_admin
+        )
+        ts_respuesta = reloj.incrementar()
+        contenido["lamport_ts"] = ts_respuesta
+        cabeceras = {"X-Lamport-Clock": str(ts_respuesta)}
+        if retry_after:
+            cabeceras["Retry-After"] = str(retry_after)
+        return responder(200, contenido, cabeceras=cabeceras)
+
+    @app.get("/videos/{id_trabajo}/{calidad}")
+    def descargar_video(id_trabajo: str, calidad: str, request: Request):
+        """Descarga el video transcodificado en formato MP4 si el trabajo finalizó con éxito."""
+        identidad = request.state.identidad
+        es_admin = identidad.rol == auth.ROL_ADMIN
+        try:
+            calidad_num = int(calidad)
+        except ValueError:
+            raise ErrorApi(
+                TipoError.CALIDAD_NO_SOLICITADA,
+                f"calidad inválida: {calidad}"
+            )
+
+        ruta_archivo, nombre_descarga = video_servicio.preparar_descarga(
+            id_trabajo=id_trabajo,
+            calidad=calidad_num,
+            usuario_solicitante=identidad.usuario,
+            es_admin=es_admin
+        )
+        ts_respuesta = reloj.incrementar()
+        return FileResponse(
+            path=ruta_archivo,
+            media_type="video/mp4",
+            filename=nombre_descarga,
+            headers={
+                "X-Lamport-Clock": str(ts_respuesta),
+                "Content-Disposition": f'attachment; filename="{nombre_descarga}"'
+            }
         )
 
     return app

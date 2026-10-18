@@ -124,17 +124,20 @@ class Lanzador:
         local = self._asegurar_imagen(self._docker(), imagen)
         return {d.partition("@")[2] for d in local.attrs.get("RepoDigests") or []}
 
-    def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802 (nombre del enunciado)
-        """Ejecuta una tarea remota instanciando un contenedor efímero aislado (Requisito R5).
+    def ejecutarTareaRemota(self, imagen, calculo, parametros, datos, volumenes=None, mem_limit=None, cpus=None, timeout=None):  # noqa: N802 (nombre del enunciado)
+        """Ejecuta una tarea remota instanciando un contenedor efímero aislado (Requisito R5 y Video).
         
         Principios de Aislamiento y Contención de Recursos:
         1. LÍMITES DE HARDWARE ESTRICTOS (cgroups):
            - `nano_cpus`: Convierte el valor en cores a nanosegundos de CPU para el kernel Linux.
              Si `tarea_cpus=1.0`, se fija `nano_cpus=1_000_000_000`. Esto previene que una tarea
              intensiva en cómputo monopolice los núcleos del procesador físico del host.
-           - `mem_limit`: Acota la memoria física máxima (ej. '256m') evitando que una tarea con
-             fugas de memoria dispare el OOM-Killer sobre el servidor principal.
-        2. CREACIÓN ATÓMICA Y LIMPIEZA GARANTIZADA:
+           - `mem_limit`: Acota la memoria física máxima (ej. '256m' o '2g' en videos) evitando que
+             una tarea dispare el OOM-Killer sobre el servidor principal.
+        2. VOLÚMENES COMPARTIDOS:
+           - Permite mapear volúmenes del host o Docker (ej. volumen 'tp2-videos' montado en '/trabajos')
+             para intercambio eficiente de streams de video sin transportarlos por sockets HTTP.
+        3. CREACIÓN ATÓMICA Y LIMPIEZA GARANTIZADA:
            - Se ejecuta `containers.create()` seguido de `start()`: si la inicialización falla,
              tenemos la referencia al objeto para destruirlo en el bloque `finally:`.
            - El bloque `finally:` asegura la destrucción inmediata del contenedor (`remove(force=True)`),
@@ -150,16 +153,23 @@ class Lanzador:
             kwargs_crear = {
                 "network": self._config.red_tareas,
             }
-            # Requisito R5: Inyección de límites de hardware en el motor de Docker
-            if getattr(self._config, "tarea_mem_limit", None):
-                kwargs_crear["mem_limit"] = self._config.tarea_mem_limit
-            if getattr(self._config, "tarea_cpus", None) and self._config.tarea_cpus > 0:
-                kwargs_crear["nano_cpus"] = int(self._config.tarea_cpus * 1_000_000_000)
+            # Montaje opcional de volúmenes compartidos (ej. tp2-videos en /trabajos)
+            if volumenes:
+                kwargs_crear["volumes"] = volumenes
+
+            # Requisito R5 y Video: Inyección de límites de hardware en el motor de Docker
+            limite_mem = mem_limit or getattr(self._config, "tarea_mem_limit", None)
+            if limite_mem:
+                kwargs_crear["mem_limit"] = limite_mem
+
+            limite_cpus = cpus if cpus is not None else getattr(self._config, "tarea_cpus", None)
+            if limite_cpus and limite_cpus > 0:
+                kwargs_crear["nano_cpus"] = int(limite_cpus * 1_000_000_000)
 
             contenedor = cliente.containers.create(imagen.referencia, **kwargs_crear)
             contenedor.start()
             base = self._esperar_listo(contenedor)
-            resultado = self._enviar(base, calculo, parametros, datos)
+            resultado = self._enviar(base, calculo, parametros, datos, timeout=timeout)
             return Ejecucion(resultado, str(contenedor.id)[:12], local.id, _digest_ejecutado(imagen, local),
                              round(time.perf_counter() - inicio, 4))
         except APIError as error:
@@ -234,14 +244,15 @@ class Lanzador:
         raise ErrorApi(TipoError.TAREA_SIN_RESPUESTA,
                        f"la tarea no estuvo lista en {self._config.timeout_arranque:g} s")
 
-    def _enviar(self, base, calculo, parametros, datos):
+    def _enviar(self, base, calculo, parametros, datos, timeout=None):
         cuerpo = {"calculo": calculo, "parametros": parametros, "datos": datos}
+        t_espera = self._config.timeout_ejecucion if timeout is None else timeout
         try:
             estado, respuesta = self._http("POST", base + "/ejecutarTarea", cuerpo,
-                                           timeout=self._config.timeout_ejecucion)
+                                           timeout=t_espera)
         except Vencido:
             raise ErrorApi(TipoError.TAREA_SIN_RESPUESTA,
-                           f"la tarea no respondió en {self._config.timeout_ejecucion:g} s") from None
+                           f"la tarea no respondió en {t_espera:g} s") from None
         except SinConexion as error:
             raise ErrorApi(TipoError.TAREA_FALLIDA, "se perdió la conexión con la tarea",
                            interno=str(error)) from None
