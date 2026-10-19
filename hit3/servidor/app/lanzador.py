@@ -1,8 +1,17 @@
-"""`ejecutarTareaRemota()`: levanta el servicio tarea como contenedor, le pasa el
-trabajo, espera el resultado y borra el contenedor.
+"""Módulo Lanzador (Hit 3): Orquestador de Contenedores con Etiquetado de Nodos y Limpieza de Huérfanos.
 
-Se usa el SDK de Docker y no el CLI: le habla directo al socket, así la imagen
-del servidor no necesita traer el binario de `docker`.
+En el contexto de un cluster distribuido (Hit 3):
+1. Aislamiento por Contenedor:
+   - Cada tarea se ejecuta dentro de un micro-contenedor Docker efímero conectado a la red privada `red_tareas`.
+2. Etiquetado de Propiedad (Ownership Labeling):
+   - Al crear el contenedor se le inyecta la etiqueta `tp2.hit3.nodo=<nodo_id>`.
+   - Si un nodo sufre una caída abrupta (SIGKILL, fallo de máquina o apagado forzoso), el bloque `finally`
+     no llega a ejecutarse y el contenedor Docker queda colgado (huérfano).
+3. Recuperación Fail-Clean al Reiniciar (`limpiar_huerfanos`):
+   - Cuando el nodo arranca, antes de aceptar tareas, consulta a Docker por todos los contenedores
+     que posean su etiqueta y los elimina forzosamente (`remove(force=True)`).
+   - De esta manera cada nodo limpia estrictamente sus propios restos sin interferir con las tareas
+     de otros nodos del cluster que comparten el daemon de Docker.
 """
 
 import json
@@ -17,27 +26,25 @@ from requests.exceptions import RequestException
 
 from app.errores import ErrorApi, TipoError
 
-# Etiqueta de los contenedores tarea: el nodo que los creó. Si a un nodo lo matan
-# con una tarea en curso, el `finally` no corre y el contenedor queda; al volver,
-# el nodo borra los que tienen su etiqueta.
+# Clave de metadatos Docker (label) para identificar qué nodo del cluster creó el contenedor.
+# Permite a cada nodo reclamar y limpiar únicamente sus contenedores tras un reinicio inesperado.
 ETIQUETA_NODO = "tp2.hit3.nodo"
 
-# Errores de "no llego al daemon": socket ausente, sin permiso, daemon caído.
+# Excepciones que representan imposibilidad de conectar con el socket de Docker (/var/run/docker.sock)
 _SIN_DOCKER = (DockerException, RequestException, OSError)
 
 
 class Ejecucion(NamedTuple):
-    """Lo que devuelve `ejecutarTareaRemota()`: el resultado y con qué se obtuvo."""
+    """Estructura con los metadatos de la tarea ejecutada en el contenedor."""
     resultado: Any
-    contenedor: str     # id corto (12 caracteres) del contenedor que ejecutó la tarea
-    imagen_id: str      # sha256 de la imagen local con que se creó (siempre existe)
-    digest: Any         # sha256 del repositorio (RepoDigests); None si la imagen no vino de un registry
-    ejecucion_s: float  # de crear el contenedor a tener la respuesta de la tarea
+    contenedor: str     # id corto (12 caracteres) del contenedor ejecutor
+    imagen_id: str      # sha256 de la imagen local
+    digest: Any         # sha256 del repositorio remoto (RepoDigests)
+    ejecucion_s: float  # latencia neta de cómputo en el contenedor
 
 
 def _digest_ejecutado(imagen, local):
-    """El digest del registry de la imagen local, o None (p. ej. una imagen construida en el host).
-    Si la imagen tiene varios, el del repositorio pedido."""
+    """Obtiene el digest criptográfico inmutable de la imagen en el registry oficial."""
     candidatos = [d.partition("@") for d in local.attrs.get("RepoDigests") or []]
     propios = [digest for repo, _, digest in candidatos
                if repo.removeprefix("docker.io/") == imagen.nombre.removeprefix("docker.io/")]
@@ -46,15 +53,15 @@ def _digest_ejecutado(imagen, local):
 
 
 class SinConexion(Exception):
-    """No se pudo conectar con el contenedor tarea."""
+    """No se pudo establecer comunicación TCP con el microservicio tarea."""
 
 
 class Vencido(Exception):
-    """El contenedor tarea no contestó a tiempo."""
+    """El contenedor tarea no completó el procesamiento dentro del tiempo límite (timeout)."""
 
 
 def http_json(metodo, url, cuerpo=None, timeout=5.0):
-    """Pedido HTTP con cuerpo JSON → (código, objeto o None si no era JSON)."""
+    """Cliente HTTP síncrono para interactuar con el contenedor tarea."""
     datos = None if cuerpo is None else json.dumps(cuerpo).encode("utf-8")
     pedido = urllib.request.Request(url, data=datos, method=metodo,
                                     headers={"Content-Type": "application/json"})
@@ -78,14 +85,18 @@ def http_json(metodo, url, cuerpo=None, timeout=5.0):
 
 
 def _sin_docker(error):
+    """Constructor estandarizado de error 503 cuando Docker no responde."""
     return ErrorApi(TipoError.SERVICIO_NO_DISPONIBLE,
                     "el servicio no puede ejecutar tareas en este momento",
                     interno=f"Docker: {error}")
 
 
 class Lanzador:
+    """Administra el ciclo de vida de los contenedores Docker en el nodo del cluster."""
+
     def __init__(self, config, logger, fabrica_docker=docker.from_env, http=http_json,
                  reloj=time.monotonic, dormir=time.sleep):
+        """Inicializa el lanzador con inyección de dependencias para tests."""
         self._config = config
         self._log = logger
         self._fabrica = fabrica_docker
@@ -95,8 +106,7 @@ class Lanzador:
         self._cliente = None
 
     def _docker(self):
-        """Se conecta recién cuando hace falta: si Docker no está al arrancar, el
-        servidor levanta igual y su /health lo informa."""
+        """Inicialización perezosa (lazy) de la conexión con el daemon de Docker."""
         if self._cliente is None:
             try:
                 self._cliente = self._fabrica()
@@ -105,28 +115,30 @@ class Lanzador:
         return self._cliente
 
     def disponible(self):
+        """Verifica la respuesta al ping del daemon de Docker."""
         try:
             return bool(self._docker().ping())
         except (ErrorApi, *_SIN_DOCKER):
             return False
 
     def preparar_imagen(self, imagen):
-        """Comprueba que la imagen existe antes de ejecutarla: si no está en el host, la
-        baja del registry con las credenciales del servidor (`422` si no existe).
-        Devuelve sus digests (`sha256:…`), para compararlos con los de la lista blanca."""
+        """Verifica que la imagen exista localmente o la descarga del registry autorizado."""
         local = self._asegurar_imagen(self._docker(), imagen)
         return {d.partition("@")[2] for d in local.attrs.get("RepoDigests") or []}
 
     def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802 (nombre del enunciado)
+        """Instancia un contenedor efímero con la etiqueta del nodo, ejecuta la tarea y lo destruye."""
         cliente = self._docker()
         local = self._asegurar_imagen(cliente, imagen)
         contenedor = None
         try:
             inicio = time.perf_counter()
-            # create + start por separado: si falla el start, `containers.run()`
-            # deja el contenedor creado y no habría referencia para borrarlo.
-            contenedor = cliente.containers.create(imagen.referencia, network=self._config.red_tareas,
-                                                   labels={ETIQUETA_NODO: str(self._config.nodo_id)})
+            # Separamos create y start para tener la referencia del contenedor en caso de fallo
+            contenedor = cliente.containers.create(
+                imagen.referencia,
+                network=self._config.red_tareas,
+                labels={ETIQUETA_NODO: str(self._config.nodo_id)}
+            )
             contenedor.start()
             base = self._esperar_listo(contenedor)
             resultado = self._enviar(base, calculo, parametros, datos)
@@ -138,7 +150,7 @@ class Lanzador:
         except _SIN_DOCKER as error:
             raise _sin_docker(error) from None
         finally:
-            # Siempre, salga bien o mal: si no, quedan contenedores tarea colgados.
+            # Garantía de eliminación en bloque finally
             if contenedor is not None:
                 try:
                     contenedor.remove(force=True)
@@ -146,7 +158,7 @@ class Lanzador:
                     self._log.warning("no se pudo borrar el contenedor %s: %s", contenedor.id, error)
 
     def limpiar_huerfanos(self):
-        """Borra los contenedores tarea que este nodo dejó al morir. Devuelve cuántos."""
+        """Identifica y destruye los contenedores huérfanos generados por este nodo en ejecuciones previas."""
         filtro = {"label": f"{ETIQUETA_NODO}={self._config.nodo_id}"}
         try:
             huerfanos = self._docker().containers.list(all=True, filters=filtro)
@@ -158,6 +170,7 @@ class Lanzador:
         if huerfanos:
             self._log.info("se borraron %d contenedores tarea huérfanos", len(huerfanos))
         return len(huerfanos)
+
 
     def _asegurar_imagen(self, cliente, imagen):
         """Descarga la imagen si no está en el host, con las credenciales del

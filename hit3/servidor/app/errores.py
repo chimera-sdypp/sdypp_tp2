@@ -1,16 +1,37 @@
-"""Errores tipados de la API y el sobre común de las respuestas.
+"""Módulo de Errores Tipados, Mapeo HTTP y Sobre Estandarizado de Respuestas (Hit 3).
 
-Cada error es un `TipoError` con su código HTTP (contrato §4). El sobre es el
-mismo salga bien o mal: `{"codigo", "contenido"}`; si es un error, `contenido`
-es `{"error": {tipo, mensaje, detalles}}`.
+Garantiza el cumplimiento estricto del Contrato de la API (§4 y §5):
+1. Estructura Unificada de Sobre (Envelope):
+   Toda respuesta generada por el servidor, ya sea exitosa (HTTP 2xx) o de error (HTTP 4xx/5xx),
+   mantiene exactamente la misma estructura de dos campos:
+   {
+       "codigo": <codigo_http_entero>,
+       "contenido": <datos_o_error>
+   }
+
+2. Taxonomía de Errores Distribuidos (Hit 3):
+   - Errores de Cliente y Validación: 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden), 404, 405, 413, 415, 422, 429.
+   - Errores de Infraestructura y Docker: 500 (Internal), 502 (Bad Gateway), 503 (Unavailable), 504 (Gateway Timeout).
+   - Errores de Coordinación de Cluster:
+     * `CLUSTER_NO_DISPONIBLE` (HTTP 503): No hay coordinador activo ni nodos vivos disponibles para asignar la tarea.
+     * `NO_ES_COORDINADOR` (HTTP 409 Conflict): Se envió una petición exclusiva de líder (asignar, heartbeat)
+       a un nodo worker que no ostenta el liderazgo en la época actual.
+     * `COORDINADOR_RECHAZADO` (HTTP 409 Conflict): Se rechazó pacíficamente el mensaje COORDINADOR de un nodo
+       cuyo identificador numérico es inferior al propio, desencadenando una nueva elección de Bully.
+
+3. Separación de Seguridad (Prevención de Fuga de Información sensible — CWE-209):
+   - Campos Públicos (`tipo`, `mensaje`, `detalles`): Visibles por el cliente HTTP en el cuerpo de la respuesta.
+   - Campo Privado (`interno`): Exclusivamente volcado a los registros de auditoría (logs) del servidor,
+     evitando exponer rutas internas de archivos, detalles de Docker o direcciones IP de la red privada.
 """
 
 from enum import Enum
-
 from fastapi.responses import JSONResponse
 
 
 class TipoError(str, Enum):
+    """Enumeración exhaustiva de los tipos de error reconocidos por el protocolo del cluster."""
+    # Validación HTTP básica
     CUERPO_VACIO = "CUERPO_VACIO"
     JSON_INVALIDO = "JSON_INVALIDO"
     IMAGEN_NO_PERMITIDA = "IMAGEN_NO_PERMITIDA"
@@ -21,24 +42,31 @@ class TipoError(str, Enum):
     PAYLOAD_INVALIDO = "PAYLOAD_INVALIDO"
     IMAGEN_INEXISTENTE = "IMAGEN_INEXISTENTE"
     TAREA_RECHAZADA = "TAREA_RECHAZADA"
+    
+    # Fallos de ejecución y Docker
     ERROR_INTERNO = "ERROR_INTERNO"
     TAREA_FALLIDA = "TAREA_FALLIDA"
     REGISTRY_NO_DISPONIBLE = "REGISTRY_NO_DISPONIBLE"
     SERVICIO_NO_DISPONIBLE = "SERVICIO_NO_DISPONIBLE"
+    TAREA_SIN_RESPUESTA = "TAREA_SIN_RESPUESTA"
+    
+    # Seguridad, RBAC y Rate Limiting (R4)
     NO_AUTORIZADO = "NO_AUTORIZADO"
     ROL_INSUFICIENTE = "ROL_INSUFICIENTE"
     DEMASIADOS_PEDIDOS = "DEMASIADOS_PEDIDOS"
-    TAREA_SIN_RESPUESTA = "TAREA_SIN_RESPUESTA"
-    # Cluster (Hit 3)
+    
+    # Protocolo de Cluster y Algoritmo Bully (Hit 3)
     CLUSTER_NO_DISPONIBLE = "CLUSTER_NO_DISPONIBLE"
     NO_ES_COORDINADOR = "NO_ES_COORDINADOR"
     COORDINADOR_RECHAZADO = "COORDINADOR_RECHAZADO"
 
     @property
-    def estado(self):
+    def estado(self) -> int:
+        """Retorna el código de estado HTTP correspondiente según el contrato."""
         return _ESTADOS[self]
 
 
+# Mapeo inmutable y determinístico entre el TipoError y el código de estado HTTP RFC 9110
 _ESTADOS = {
     TipoError.CUERPO_VACIO: 400,
     TipoError.JSON_INVALIDO: 400,
@@ -58,6 +86,7 @@ _ESTADOS = {
     TipoError.REGISTRY_NO_DISPONIBLE: 502,
     TipoError.SERVICIO_NO_DISPONIBLE: 503,
     TipoError.TAREA_SIN_RESPUESTA: 504,
+    # Códigos específicos de Cluster
     TipoError.CLUSTER_NO_DISPONIBLE: 503,
     TipoError.NO_ES_COORDINADOR: 409,
     TipoError.COORDINADOR_RECHAZADO: 409,
@@ -65,13 +94,18 @@ _ESTADOS = {
 
 
 class ErrorApi(Exception):
-    """Un error que termina en una respuesta al cliente.
+    """Excepción de negocio que encapsula un error tipado para ser serializado hacia el cliente."""
 
-    `mensaje` y `detalles` son públicos. `interno` sólo va al log: ahí va lo que
-    el cliente no tiene por qué ver (el error de Docker tal cual, la IP, etc.).
-    """
-
-    def __init__(self, tipo, mensaje, detalles=None, cabeceras=None, interno=None):
+    def __init__(self, tipo: TipoError, mensaje: str, detalles=None, cabeceras=None, interno=None):
+        """Inicializa la excepción estructurada.
+        
+        Parámetros:
+        - tipo: Instancia de TipoError.
+        - mensaje: Explicación amigable y segura para el cliente.
+        - detalles: Lista opcional de campos infractores o metadatos de contexto.
+        - cabeceras: Diccionario opcional de encabezados HTTP (ej. Retry-After, Allow).
+        - interno: Texto de diagnóstico privado volcado únicamente a los logs.
+        """
         super().__init__(mensaje)
         self.tipo = tipo
         self.mensaje = mensaje
@@ -80,12 +114,15 @@ class ErrorApi(Exception):
         self.interno = interno
 
 
-def responder(codigo, contenido, cabeceras=None):
+def responder(codigo: int, contenido, cabeceras=None) -> JSONResponse:
+    """Construye una respuesta JSON conforming al contrato de sobre del TP2."""
     return JSONResponse(status_code=codigo, content={"codigo": codigo, "contenido": contenido},
                         headers=cabeceras)
 
 
-def responder_error(error):
+def responder_error(error: ErrorApi) -> JSONResponse:
+    """Serializa un ErrorApi dentro del sobre estructurado del protocolo."""
     contenido = {"error": {"tipo": error.tipo.value, "mensaje": error.mensaje,
                            "detalles": error.detalles}}
     return responder(error.tipo.estado, contenido, error.cabeceras)
+
