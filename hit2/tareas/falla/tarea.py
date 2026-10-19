@@ -1,12 +1,18 @@
-"""Servicio tarea de inyección de fallas y timeouts (Hit 2 — R5).
+"""Microservicio de Tarea: Inyección de Fallas, Timeouts y Resiliencia (Requisito R5).
 
-Permite probar intencionalmente:
-1. Respuestas normales con latencia controlada (dormir).
-2. Tareas que exceden el timeout configurado en el servidor (dormir > timeout).
-3. Fallas internas 500 en el contenedor (explotar).
-4. Rechazo de parámetros inválidos 422 (división por cero, parámetros malformados).
-
-Cumple el contrato del servicio tarea (hit2/contrato.md §5).
+Arquitectura y Propósito:
+1. ARNÉS DE PRUEBA DE RESILIENCIA DEL SERVIDOR:
+   Este microservicio fue concebido expresamente para validar cómo reacciona el pool
+   de workers del servidor ante condiciones anómalas en el contenedor de ejecución.
+2. ESCENARIOS SIMULADOS:
+   - `dormir`: Introduce retardos arbitrarios (`time.sleep(segundos)`). Permite evaluar
+     la expiración del timeout configurable del servidor (`TP2_TIMEOUT_TAREA_S`) y comprobar
+     que el lanzador mate el contenedor y libere el worker del pool de inmediato.
+   - `division`: Valida la propagación de errores de dominio matemático (división por cero -> 422).
+   - `explotar`: Lanza deliberadamente una excepción `ErrorSimulado`, provocando un HTTP 500
+     dentro del microservicio para verificar que el servidor capture el fallo y limpie el entorno.
+3. ESTRICTA CONFORMIDAD CONTRACTUAL:
+   Emite el sobre canónico {"codigo": ..., "contenido": ...} en todas las respuestas.
 """
 
 import json
@@ -15,17 +21,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class ParametrosInvalidos(Exception):
+    """Excepción lanzada cuando los parámetros no respetan tipos o cotas válidas."""
     pass
 
 
 class ErrorSimulado(Exception):
+    """Excepción utilizada para provocar intencionalmente una falla interna 500 no recuperable."""
     pass
 
 
-def ejecutarTarea(calculo: str, parametros: dict):
+def ejecutarTarea(calculo: str, parametros: dict) -> dict:  # noqa: N802 (nombre fijado por enunciado)
+    """Punto de despacho de la tarea de fallas e inyección de latencia."""
     if not isinstance(parametros, dict):
         raise ParametrosInvalidos("'parametros' debe ser un objeto")
 
+    # Escenario 1: Latencia controlada para pruebas de timeout del pool
     if calculo == "dormir":
         segundos = parametros.get("segundos")
         if not isinstance(segundos, (int, float)) or isinstance(segundos, bool):
@@ -35,9 +45,11 @@ def ejecutarTarea(calculo: str, parametros: dict):
         if segundos > 300:
             raise ParametrosInvalidos("'segundos' excede el máximo permitido (300)")
 
+        # Bloqueo sincrónico para simular procesamiento demorado
         time.sleep(segundos)
         return {"calculo": "dormir", "segundos_dormidos": segundos, "estado": "desperté"}
 
+    # Escenario 2: Operación aritmética con validación de división por cero
     if calculo == "division":
         a = parametros.get("a")
         b = parametros.get("b")
@@ -47,6 +59,7 @@ def ejecutarTarea(calculo: str, parametros: dict):
             raise ParametrosInvalidos("división por cero")
         return {"calculo": "division", "resultado": a / b}
 
+    # Escenario 3: Crash simulado no recuperable
     if calculo == "explotar":
         # Simula un crash / error 500 no recuperable dentro del contenedor
         raise ErrorSimulado("falla crítica simulada en contenedor tarea")
@@ -55,7 +68,10 @@ def ejecutarTarea(calculo: str, parametros: dict):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _responder(self, codigo, contenido):
+    """Manejador HTTP para el contenedor de inyección de fallas."""
+
+    def _responder(self, codigo: int, contenido: dict) -> None:
+        """Serializa y emite el sobre estándar en formato JSON."""
         datos = json.dumps({"codigo": codigo, "contenido": contenido}).encode("utf-8")
         self.send_response(codigo)
         self.send_header("Content-Type", "application/json")
@@ -63,16 +79,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(datos)
 
-    def _error(self, codigo, tipo, mensaje):
+    def _error(self, codigo: int, tipo: str, mensaje: str) -> None:
+        """Emite sobre estructurado de error."""
         self._responder(codigo, {"error": {"tipo": tipo, "mensaje": mensaje}})
 
-    def do_GET(self):
+    def do_GET(self) -> None:
+        """Endpoint de salud consultado por el lanzador antes de inyectar trabajo."""
         if self.path == "/health":
             self._responder(200, {"tarea": "ok", "tipo": "falla"})
         else:
             self._error(404, "RUTA_INEXISTENTE", "ruta inexistente")
 
-    def do_POST(self):
+    def do_POST(self) -> None:
+        """Endpoint de ejecución remota de tareas."""
         if self.path != "/ejecutarTarea":
             self._error(404, "RUTA_INEXISTENTE", "ruta inexistente")
             return
@@ -91,4 +110,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Iniciar servidor HTTP en el puerto 8080 del contenedor
     ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+
