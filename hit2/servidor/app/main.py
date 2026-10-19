@@ -42,7 +42,19 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None, video_pool=None
     if not permitidas:
         log.warning("TP2_IMAGENES_PERMITIDAS está vacía: se va a rechazar toda tarea")
 
-    app = FastAPI(title="TP2 · Hit 2 · Servidor con Pool de Workers y Relojes de Lamport", redirect_slashes=False)
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(app_inst: FastAPI):
+        yield
+        if hasattr(video_servicio, "detener_recolector_basura"):
+            video_servicio.detener_recolector_basura()
+
+    app = FastAPI(
+        title="TP2 · Hit 2 · Servidor con Pool de Workers y Relojes de Lamport",
+        redirect_slashes=False,
+        lifespan=lifespan,
+    )
 
     # Qué rol hace falta en cada ruta. Una ruta que no está acá pide un token válido de
     # cualquier rol; sólo `/health` es pública (lo usan el healthcheck y el despliegue).
@@ -295,7 +307,7 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None, video_pool=None
         # Reserva atómica previa de cuota (R3): previene carreras TOCTOU antes de procesar el cuerpo
         id_trabajo = uuid.uuid4().hex
         video_servicio.reservar_cuota_usuario(identidad.usuario, id_trabajo)
-        dir_trabajo = os.path.join(config.video_dir, id_trabajo)
+        dir_trabajo = os.path.join(video_servicio.dir_trabajos, id_trabajo)
 
         try:
             if ct.startswith("multipart/form-data"):
@@ -327,18 +339,30 @@ def crear_app(config=None, lanzador=None, reloj=None, pool=None, video_pool=None
                 except Exception:
                     raise ErrorApi(TipoError.JSON_INVALIDO, "JSON mal formado")
                 if not isinstance(datos, dict):
-                    raise ErrorApi(TipoError.JSON_INVALIDO, "se esperaba un objeto JSON")
+                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "se esperaba un objeto JSON")
 
                 if "video" in datos and "url" in datos:
-                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "no se pueden enviar 'video' y 'url' simultáneamente")
-                if "url" not in datos:
-                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "falta el campo 'url'", detalles=["url"])
-                if "calidades" not in datos:
-                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "falta el campo 'calidades'", detalles=["calidades"])
+                    raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "no se pueden enviar 'video' y 'url' simultáneamente", detalles=["video", "url"])
 
-                for k in datos:
-                    if k not in ("url", "calidades"):
-                        raise ErrorApi(TipoError.PAYLOAD_INVALIDO, f"campo no permitido: {k}", detalles=[k])
+                faltantes = []
+                if "url" not in datos:
+                    faltantes.append("url")
+                if "calidades" not in datos:
+                    faltantes.append("calidades")
+                if faltantes:
+                    raise ErrorApi(
+                        TipoError.PAYLOAD_INVALIDO,
+                        f"faltan campos obligatorios: {', '.join(faltantes)}",
+                        detalles=faltantes
+                    )
+
+                sobrantes = [k for k in datos if k not in ("url", "calidades")]
+                if sobrantes:
+                    raise ErrorApi(
+                        TipoError.PAYLOAD_INVALIDO,
+                        f"campos no permitidos: {', '.join(sobrantes)}",
+                        detalles=sobrantes
+                    )
 
                 url = datos["url"]
                 if not isinstance(url, str) or not url.strip():

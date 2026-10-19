@@ -84,16 +84,24 @@ def calcular_expiracion_iso(fin_iso: Optional[str], horas_retencion: int = 24) -
 
 
 def ffprobe_default(ruta_archivo: str) -> dict:
-    """Ejecuta ffprobe sobre el archivo y extrae metadatos en JSON."""
+    """Ejecuta ffprobe sobre el archivo o URL y extrae metadatos en JSON.
+    
+    Aislamiento de Seguridad:
+    - Para URLs remotas se autoriza únicamente 'http,https,tcp,tls', excluyendo estrictamente
+      'file' para impedir lecturas arbitrarias de archivos locales vía playlists HLS (CVE-2016-1897).
+    - Para archivos locales en disco se restringe a 'file,crypto', bloqueando peticiones de red externas.
+    """
+    es_url = str(ruta_archivo).startswith("http://") or str(ruta_archivo).startswith("https://")
+    whitelist = "http,https,tcp,tls" if es_url else "file,crypto"
     comando = [
         "ffprobe",
         "-v", "error",
-        "-protocol_whitelist", "file,http,https,tcp,tls",
+        "-protocol_whitelist", whitelist,
         "-select_streams", "v:0",
         "-show_entries", "stream=width,height,duration",
         "-show_entries", "format=duration,size",
         "-of", "json",
-        ruta_archivo,
+        str(ruta_archivo),
     ]
     try:
         res = subprocess.run(comando, capture_output=True, text=True, timeout=15)
@@ -115,6 +123,11 @@ def ffprobe_default(ruta_archivo: str) -> dict:
             TipoError.ARCHIVO_NO_ES_VIDEO,
             "no se pudieron leer los metadatos del video",
             interno=str(err)
+        )
+    except FileNotFoundError:
+        raise ErrorApi(
+            TipoError.ERROR_INTERNO,
+            "la herramienta ffprobe no está disponible en el servidor"
         )
 
 
@@ -149,8 +162,17 @@ class VideoServicio:
         self._mutex_usuarios = threading.Lock()
         self._trabajos_activos_por_usuario: Dict[str, Set[str]] = {}
 
+        # Hilo de recolección de basura periódica (purga de trabajos vencidos > 24 h)
+        self._detener_recolector = threading.Event()
+        self._hilo_recolector: Optional[threading.Thread] = None
+
         # Ejecutar recuperación Fail-Clean al inicializar
         self.recuperar_al_arrancar()
+
+        # Iniciar recolector de basura periódico en segundo plano
+        gc_intervalo = getattr(config, "video_gc_intervalo_s", 600.0)
+        if gc_intervalo > 0:
+            self.iniciar_recolector_basura(gc_intervalo)
 
     # --------------------------------------------------------------------------
     # Recuperación Fail-Clean y Retención (Contrato §3 y § Anexo)
@@ -160,6 +182,7 @@ class VideoServicio:
         
         1. Las carpetas sin estado.json son subidas incompletas/huérfanas: se borran.
         2. Los trabajos que quedaron 'en_cola' o 'procesando' se marcan como error TRABAJO_PERDIDO.
+           En el Hit 3, cada nodo solo marca como perdidos los suyos (§ Anexo).
         3. Los trabajos terminados hace más de 24 horas se borran.
         """
         if not os.path.isdir(self.dir_trabajos):
@@ -223,8 +246,14 @@ class VideoServicio:
                     except Exception:
                         pass
 
-                # Fail-Clean: Si el servidor cayó mientras procesaba o en cola, pasar a TRABAJO_PERDIDO
+                # Fail-Clean: Si el servidor cayó mientras procesaba o en cola, pasar a TRABAJO_PERDIDO.
+                # En el Hit 3, cada nodo solo marca como perdidos los suyos (§ Anexo).
                 if estado_actual in ("en_cola", "procesando"):
+                    nodo_trabajo = estado.get("nodo")
+                    nodo_actual = getattr(self.config, "nodo_id", None)
+                    if nodo_actual is not None and nodo_trabajo is not None and str(nodo_trabajo) != str(nodo_actual):
+                        continue  # Pertenece a otro nodo del clúster que puede seguir vivo
+
                     estado["estado"] = "error"
                     estado["error"] = {
                         "tipo": "TRABAJO_PERDIDO",
@@ -237,23 +266,106 @@ class VideoServicio:
                     if self.log:
                         self.log.warning("video | trabajo %s recuperado como TRABAJO_PERDIDO", id_trabajo)
 
+    def purgar_vencidos(self) -> int:
+        """Purga trabajos finalizados que superaron el tiempo de retención (24 h) y huérfanos.
+        
+        Retorna la cantidad de directorios purgados.
+        """
+        if not os.path.isdir(self.dir_trabajos):
+            return 0
+        ahora_ts = time.time()
+        retencion_s = self.config.video_retencion_horas * 3600
+        purgados = 0
+        try:
+            entradas = list(os.scandir(self.dir_trabajos))
+        except OSError:
+            return 0
+
+        for entrada in entradas:
+            if not entrada.is_dir() or not RE_ID_TRABAJO.fullmatch(entrada.name):
+                continue
+            ruta_estado = os.path.join(entrada.path, "estado.json")
+            if not os.path.exists(ruta_estado):
+                try:
+                    # Huérfano sin estado.json con más de 30 minutos de antigüedad
+                    if ahora_ts - entrada.stat().st_mtime > 1800:
+                        shutil.rmtree(entrada.path, ignore_errors=True)
+                        purgados += 1
+                except OSError:
+                    pass
+                continue
+
+            try:
+                with open(ruta_estado, "r", encoding="utf-8") as f:
+                    estado = json.load(f)
+                estado_actual = estado.get("estado")
+                fin_iso = estado.get("tiempos", {}).get("fin")
+                if estado_actual in ("listo", "error") and fin_iso:
+                    dt = datetime.fromisoformat(fin_iso.replace("Z", "+00:00"))
+                    if ahora_ts - dt.timestamp() > retencion_s:
+                        shutil.rmtree(entrada.path, ignore_errors=True)
+                        purgados += 1
+                        if self.log:
+                            self.log.info("video | recolector de basura: purgado trabajo vencido %s", entrada.name)
+            except Exception:
+                continue
+        return purgados
+
+    def iniciar_recolector_basura(self, intervalo_s: float = 600.0) -> None:
+        """Inicia el hilo demonio de recolección de basura cada intervalo_s segundos (por defecto 10 min)."""
+        if self._hilo_recolector is not None and self._hilo_recolector.is_alive():
+            return
+
+        def _bucle_limpieza():
+            while not self._detener_recolector.is_set():
+                if self._detener_recolector.wait(intervalo_s):
+                    break
+                try:
+                    self.purgar_vencidos()
+                except Exception as err:
+                    if self.log:
+                        self.log.warning("video | error en recolector de basura: %s", err)
+
+        self._detener_recolector.clear()
+        self._hilo_recolector = threading.Thread(target=_bucle_limpieza, name="video-garbage-collector", daemon=True)
+        self._hilo_recolector.start()
+
+    def detener_recolector_basura(self) -> None:
+        """Detiene el hilo demonio de recolección de basura."""
+        self._detener_recolector.set()
+        if self._hilo_recolector and self._hilo_recolector.is_alive():
+            self._hilo_recolector.join(timeout=2.0)
+
     # --------------------------------------------------------------------------
     # Validaciones Previas (Contrato §2, §3 y §6)
     # --------------------------------------------------------------------------
     def validar_calidades(self, calidades_raw: any) -> List[int]:
-        """Valida la lista o string de calidades solicitadas."""
+        """Valida la lista o string de calidades solicitadas sin coerción implícita."""
         if isinstance(calidades_raw, str):
             partes = [c.strip() for c in calidades_raw.split(",") if c.strip()]
         elif isinstance(calidades_raw, list):
             partes = calidades_raw
         else:
-            raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "el campo calidades es obligatorio")
+            raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "el campo calidades es obligatorio", detalles=["calidades"])
 
         if not partes:
             raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "el campo calidades no puede estar vacío", detalles=["calidades"])
 
         calidades: List[int] = []
         for p in partes:
+            # Rechazar estrictamente booleanos, floats y tipos no enteros
+            if isinstance(p, bool) or not isinstance(p, (int, str)):
+                raise ErrorApi(
+                    TipoError.PAYLOAD_INVALIDO,
+                    f"calidad inválida: {p}",
+                    detalles=["calidades"]
+                )
+            if isinstance(p, str) and not p.isdigit():
+                raise ErrorApi(
+                    TipoError.PAYLOAD_INVALIDO,
+                    f"calidad inválida: {p}",
+                    detalles=["calidades"]
+                )
             try:
                 c_num = int(p)
             except (ValueError, TypeError):
@@ -288,8 +400,8 @@ class VideoServicio:
         if not hostname:
             raise ErrorApi(TipoError.URL_INVALIDA, "la URL no contiene un nombre de host válido")
 
-        if hostname.lower() in ("localhost", "127.0.0.1", "::1"):
-            raise ErrorApi(TipoError.URL_INVALIDA, "no se permiten URLs apuntando a localhost")
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0", "::"):
+            raise ErrorApi(TipoError.URL_INVALIDA, "no se permiten URLs apuntando a localhost o direcciones no enrutables")
 
         try:
             # Resolución DNS para verificar rangos privados
@@ -297,7 +409,13 @@ class VideoServicio:
             for info in ips:
                 ip_str = info[4][0]
                 ip_obj = ipaddress.ip_address(ip_str)
-                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
+                if (
+                    ip_obj.is_private
+                    or ip_obj.is_loopback
+                    or ip_obj.is_link_local
+                    or ip_obj.is_reserved
+                    or ip_obj.is_unspecified
+                ):
                     raise ErrorApi(
                         TipoError.URL_INVALIDA,
                         f"la URL apunta a una dirección IP no permitida ({ip_str})"
@@ -335,6 +453,12 @@ class VideoServicio:
             duracion_s = float(dur_str)
         except (ValueError, TypeError):
             raise ErrorApi(TipoError.ARCHIVO_NO_ES_VIDEO, f"duración de video inválida: {dur_str}")
+
+        if duracion_s <= 0:
+            raise ErrorApi(
+                TipoError.ARCHIVO_NO_ES_VIDEO,
+                f"la duración del video ({duracion_s} s) debe ser mayor a 0"
+            )
 
         if duracion_s > self.config.video_duracion_max_s:
             raise ErrorApi(
@@ -496,6 +620,12 @@ class VideoServicio:
         except (ValueError, TypeError):
             raise ErrorApi(TipoError.URL_INACCESIBLE, f"duración de video inválida en la URL: {dur_str}")
 
+        if duracion_s <= 0:
+            raise ErrorApi(
+                TipoError.URL_INACCESIBLE,
+                f"la duración del video en la URL ({duracion_s} s) debe ser mayor a 0"
+            )
+
         if duracion_s > self.config.video_duracion_max_s:
             raise ErrorApi(
                 TipoError.VIDEO_DEMASIADO_LARGO,
@@ -636,6 +766,7 @@ class VideoServicio:
         campos_permitidos = {"video", "calidades"}
         current_headers = {}
         current_field = None
+        video_presente = False
 
         def on_header_field(data, start, end):
             key = data[start:end].decode("latin1").lower()
@@ -657,7 +788,7 @@ class VideoServicio:
                 current_headers[key] = current_headers.get(key, b"") + data[start:end]
 
         def on_headers_finished():
-            nonlocal current_field, nombre_archivo, file_out
+            nonlocal current_field, nombre_archivo, file_out, video_presente
             cd = current_headers.get("content-disposition", b"").decode("latin1")
             _, cd_params = parse_options_header(cd)
             name_raw = cd_params.get(b"name") or cd_params.get("name", b"")
@@ -673,6 +804,7 @@ class VideoServicio:
                     nombre_archivo = self.sanitizar_nombre_archivo(fn_str)
 
             if current_field == "video":
+                video_presente = True
                 file_out = open(ruta_entrada, "wb")
 
         def on_part_data(data, start, end):
@@ -732,11 +864,20 @@ class VideoServicio:
                 detalles=list(campos_inesperados)
             )
 
+        faltantes = []
         if "calidades" not in campos or not campos["calidades"].strip():
-            raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "falta el campo obligatorio 'calidades'", detalles=["calidades"])
+            faltantes.append("calidades")
+        if not video_presente or not os.path.exists(ruta_entrada):
+            faltantes.append("video")
+        if faltantes:
+            raise ErrorApi(
+                TipoError.PAYLOAD_INVALIDO,
+                f"faltan campos obligatorios en el formulario: {', '.join(faltantes)}",
+                detalles=faltantes,
+            )
 
-        if bytes_video == 0 or not os.path.exists(ruta_entrada):
-            raise ErrorApi(TipoError.PAYLOAD_INVALIDO, "falta el archivo 'video' o está vacío", detalles=["video"])
+        if bytes_video == 0:
+            raise ErrorApi(TipoError.ARCHIVO_NO_ES_VIDEO, "el archivo de video está vacío (0 bytes)")
 
         calidades_str = campos["calidades"].decode("utf-8", errors="ignore").strip()
         return nombre_archivo, bytes_video, calidades_str
@@ -770,6 +911,7 @@ class VideoServicio:
         estado_inicial = {
             "id": id_trabajo,
             "usuario": usuario,
+            "nodo": getattr(self.config, "nodo_id", None),
             "estado": "en_cola",
             "calidades": calidades,
             "original": {
@@ -863,16 +1005,25 @@ class VideoServicio:
             )
 
         try:
+            import time
             req = urllib.request.Request(url, headers={"User-Agent": "CerberusVideo/1.0"})
             bytes_descargados = 0
+            inicio_descarga = time.time()
+            max_segundos_descarga = 300.0
             with opener.open(req, timeout=30) as resp:
-                if resp.status != 200:
+                status = getattr(resp, "status", getattr(resp, "code", 200))
+                if status != 200:
                     raise ErrorApi(
                         TipoError.DESCARGA_FALLIDA,
-                        f"error HTTP {resp.status} al descargar el video desde {url}"
+                        f"error HTTP {status} al descargar el video desde {url}"
                     )
                 with open(ruta_destino, "wb") as f_out:
                     while True:
+                        if time.time() - inicio_descarga > max_segundos_descarga:
+                            raise ErrorApi(
+                                TipoError.DESCARGA_FALLIDA,
+                                f"la descarga excedió el tiempo límite de {int(max_segundos_descarga)} segundos"
+                            )
                         chunk = resp.read(65536)
                         if not chunk:
                             break
@@ -1007,6 +1158,14 @@ class VideoServicio:
                             "descargar": f"/videos/{id_trabajo}/{cal_k}",
                         }
                 estado["resultados"] = res_dict
+
+                # Liberar archivo original de entrada una vez transcodificado exitosamente
+                ruta_entrada_eliminar = os.path.join(self.dir_trabajos, id_trabajo, "entrada")
+                if os.path.exists(ruta_entrada_eliminar):
+                    try:
+                        os.remove(ruta_entrada_eliminar)
+                    except OSError:
+                        pass
 
             self._escribir_json_atomico(ruta_estado, estado)
         except Exception as err:

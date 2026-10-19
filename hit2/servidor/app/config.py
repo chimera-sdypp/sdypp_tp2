@@ -63,12 +63,15 @@ class Config:
     video_mem_limit: str = "2g"
     video_cpus: float = 2.0
     video_dir: str = "/trabajos"
+    video_volumen: str = "tp2-videos"
     video_workers_max: int = 2
     video_cola_max: int = 20
     video_trabajos_por_usuario_max: int = 3
     video_retencion_horas: int = 24
     video_tamano_max_bytes: int = 1073741824  # 1 GiB
     video_duracion_max_s: float = 900.0      # 15 min
+    video_gc_intervalo_s: float = 600.0      # 10 min
+    nodo_id: str | None = None               # Identificador de nodo en cluster (Hit 3)
 
     @classmethod
     def desde_entorno(cls, entorno=None):
@@ -116,10 +119,12 @@ class Config:
             video_mem_limit=v_mem,
             video_cpus=v_cpus,
             video_dir=e.get("TP2_VIDEO_DIR") or cls.video_dir,
+            video_volumen=e.get("TP2_VIDEO_VOLUMEN") or cls.video_volumen,
             video_workers_max=v_workers,
             video_cola_max=v_cola,
             video_trabajos_por_usuario_max=v_por_user,
             video_retencion_horas=v_retencion,
+            nodo_id=e.get("TP2_NODO_ID"),
         )
 
 

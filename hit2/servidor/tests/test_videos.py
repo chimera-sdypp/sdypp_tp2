@@ -437,7 +437,7 @@ def test_tipo_de_contenido_no_soportado_415(entorno_video):
 
 
 def test_modo_url_json_cuerpo_vacio_o_mal_formado_400(entorno_video):
-    """Petición application/json con cuerpo vacío o JSON roto devuelve 400 (§6)."""
+    """Petición application/json con cuerpo vacío o JSON roto devuelve 400; JSON no-objeto devuelve 422 (§6)."""
     cliente, _, _, _, _ = entorno_video()
 
     res_vacio = cliente.post("/videos", headers={"Content-Type": "application/json"}, content=b"")
@@ -447,6 +447,29 @@ def test_modo_url_json_cuerpo_vacio_o_mal_formado_400(entorno_video):
     res_roto = cliente.post("/videos", headers={"Content-Type": "application/json"}, content=b"{roto:")
     assert res_roto.status_code == 400
     assert res_roto.json()["contenido"]["error"]["tipo"] == "JSON_INVALIDO"
+
+    # JSON válido pero es un array o primitivo: 422 PAYLOAD_INVALIDO
+    res_array = cliente.post("/videos", headers={"Content-Type": "application/json"}, content=b"[1, 2, 3]")
+    assert res_array.status_code == 422
+    assert res_array.json()["contenido"]["error"]["tipo"] == "PAYLOAD_INVALIDO"
+
+    # Objeto vacío: faltan url y calidades
+    res_obj_vacio = cliente.post("/videos", headers={"Content-Type": "application/json"}, json={})
+    assert res_obj_vacio.status_code == 422
+    assert res_obj_vacio.json()["contenido"]["error"]["tipo"] == "PAYLOAD_INVALIDO"
+    assert "url" in res_obj_vacio.json()["contenido"]["error"]["detalles"]
+    assert "calidades" in res_obj_vacio.json()["contenido"]["error"]["detalles"]
+
+    # Campos no permitidos
+    res_extra = cliente.post(
+        "/videos",
+        headers={"Content-Type": "application/json"},
+        json={"url": "https://example.com/v.mp4", "calidades": [720], "extra1": 1, "extra2": 2}
+    )
+    assert res_extra.status_code == 422
+    assert res_extra.json()["contenido"]["error"]["tipo"] == "PAYLOAD_INVALIDO"
+    assert "extra1" in res_extra.json()["contenido"]["error"]["detalles"]
+    assert "extra2" in res_extra.json()["contenido"]["error"]["detalles"]
 
 
 def test_modo_url_rechazo_ssrf_direcciones_privadas_422(entorno_video):
@@ -1082,4 +1105,140 @@ def test_modo_url_rechazo_redireccion_ssrf_en_validacion_422(entorno_video):
 
     # Verificar que la cuota del usuario 'ana' fue liberada y no quedó trabajo activo
     assert v_servicio.trabajos_activos_de("ana") == 0
+
+
+def test_video_vacio_devuelve_archivo_no_es_video_422(entorno_video):
+    """Un archivo de 0 bytes (vacio.mp4) debe responder 422 ARCHIVO_NO_ES_VIDEO según casos.json (#132)."""
+    cliente, _, _, _, _ = entorno_video()
+
+    files = {
+        "video": ("vacio.mp4", b"", "video/mp4"),
+    }
+    data = {"calidades": "240"}
+    res = cliente.post("/videos", files=files, data=data)
+
+    assert res.status_code == 422
+    contenido = res.json()["contenido"]
+    assert contenido["error"]["tipo"] == "ARCHIVO_NO_ES_VIDEO"
+    assert "vacío" in contenido["error"]["mensaje"]
+
+
+def test_campo_video_faltante_devuelve_payload_invalido_422(entorno_video):
+    """Si no se incluye el campo 'video' en el form multipart, debe responder 422 PAYLOAD_INVALIDO con detalles=['video']."""
+    cliente, _, _, _, _ = entorno_video()
+
+    # Formulario multipart sin campo 'video'
+    files = {"calidades": (None, "720")}
+    res = cliente.post("/videos", files=files)
+
+    assert res.status_code == 422
+    contenido = res.json()["contenido"]
+    assert contenido["error"]["tipo"] == "PAYLOAD_INVALIDO"
+    assert "video" in contenido["error"]["detalles"]
+
+
+def test_calidades_con_float_o_invalido_devuelve_payload_invalido_422(entorno_video):
+    """Valores de calidad flotantes o no enteros como 720.5 deben responder 422 PAYLOAD_INVALIDO con detalles=['calidades']."""
+    cliente, _, _, _, _ = entorno_video()
+
+    # Modo URL con float
+    res = cliente.post(
+        "/videos",
+        headers={"Content-Type": "application/json"},
+        json={"url": "https://cerberus.example.com/v.mp4", "calidades": [720.5]}
+    )
+    assert res.status_code == 422
+    contenido = res.json()["contenido"]
+    assert contenido["error"]["tipo"] == "PAYLOAD_INVALIDO"
+    assert contenido["error"]["detalles"] == ["calidades"]
+
+    # Modo multipart con float
+    files = {"video": ("test.mp4", b"dummy", "video/mp4")}
+    data = {"calidades": "720.5"}
+    res2 = cliente.post("/videos", files=files, data=data)
+    assert res2.status_code == 422
+    assert res2.json()["contenido"]["error"]["tipo"] == "PAYLOAD_INVALIDO"
+    assert res2.json()["contenido"]["error"]["detalles"] == ["calidades"]
+
+
+def test_duracion_cero_o_negativa_devuelve_archivo_no_es_video_422(entorno_video):
+    """Un video reportado con duración <= 0 s se rechaza como 422 ARCHIVO_NO_ES_VIDEO."""
+    probe = ffprobe_falso_fabrica(duracion_s=0.0)
+    cliente, _, _, _, _ = entorno_video(ffprobe_runner=probe)
+
+    files = {"video": ("cero.mp4", b"fake", "video/mp4")}
+    data = {"calidades": "720"}
+    res = cliente.post("/videos", files=files, data=data)
+
+    assert res.status_code == 422
+    assert res.json()["contenido"]["error"]["tipo"] == "ARCHIVO_NO_ES_VIDEO"
+    assert "duración" in res.json()["contenido"]["error"]["mensaje"]
+
+
+def test_archivo_entrada_se_elimina_tras_transcodificacion_exitosa(entorno_video):
+    """Para ahorrar espacio en disco, el archivo original 'entrada' se borra al terminar exitosamente."""
+    cliente, v_servicio, _, _, _ = entorno_video()
+
+    files = {"video": ("grande.mp4", b"fake_video_stream", "video/mp4")}
+    data = {"calidades": "720"}
+    res = cliente.post("/videos", files=files, data=data)
+    assert res.status_code == 202
+    id_t = res.json()["contenido"]["id"]
+
+    # Esperar que el worker termine la tarea
+    time.sleep(0.15)
+
+    dir_t = os.path.join(v_servicio.dir_trabajos, id_t)
+    ruta_entrada = os.path.join(dir_t, "entrada")
+    assert not os.path.exists(ruta_entrada)
+
+
+def test_url_con_ip_no_especificada_0000_rechazada_ssrf(entorno_video):
+    """URLs que apunten a 0.0.0.0 o :: deben ser rechazadas con 422 URL_INVALIDA."""
+    cliente, _, _, _, _ = entorno_video()
+
+    res = cliente.post(
+        "/videos",
+        headers={"Content-Type": "application/json"},
+        json={"url": "http://0.0.0.0/video.mp4", "calidades": [720]}
+    )
+    assert res.status_code == 422
+    assert res.json()["contenido"]["error"]["tipo"] == "URL_INVALIDA"
+
+
+def test_aislamiento_de_nodos_en_recuperacion_arranque(tmp_path):
+    """Al arrancar en cluster (Hit 3), un nodo no debe marcar como TRABAJO_PERDIDO los trabajos de otro nodo."""
+    dir_trabajos = tmp_path / "trabajos"
+    os.makedirs(dir_trabajos, exist_ok=True)
+
+    id_trabajo = "a" * 32
+    dir_t = dir_trabajos / id_trabajo
+    os.makedirs(dir_t, exist_ok=True)
+
+    # Trabajo perteneciente a nodo-2 que estaba procesando
+    estado_otro_nodo = {
+        "id": id_trabajo,
+        "usuario": "ana",
+        "nodo": "nodo-2",
+        "estado": "procesando",
+        "calidades": [720],
+        "original": {"nombre": "v.mp4", "bytes": 100, "duracion_s": 10, "ancho": 1280, "alto": 720},
+        "tiempos": {"creado": "2026-10-18T20:00:00Z", "inicio": "2026-10-18T20:01:00Z"},
+        "resultados": None,
+        "error": None
+    }
+    with open(dir_t / "estado.json", "w", encoding="utf-8") as f:
+        json.dump(estado_otro_nodo, f)
+
+    # Iniciar servicio con nodo_id = "nodo-1"
+    config = Config(dir_logs=str(tmp_path / "logs"), video_dir=str(dir_trabajos), jwt_secreto=SECRETO, nodo_id="nodo-1")
+    VideoServicio(config, PoolWorkers(LanzadorVideoFalso(), 2), LanzadorVideoFalso())
+
+    # El estado debe mantenerse intacto (no pisado como TRABAJO_PERDIDO por nodo-1)
+    with open(dir_t / "estado.json", "r", encoding="utf-8") as f:
+        estado_post = json.load(f)
+
+    assert estado_post["estado"] == "procesando"
+    assert estado_post["error"] is None
+
 
