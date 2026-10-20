@@ -1,8 +1,5 @@
 # Contrato — Transcodificación de video (Hits 2 y 3)
 
-> **Borrador para acordar.** Las decisiones que todavía están abiertas están al final, en
-> [Para acordar](#8-para-acordar).
-
 Le mandás un video y las calidades que querés, y el servidor te devuelve una versión del video en
 cada calidad. Transcodificar puede tardar desde segundos hasta decenas de minutos, así que el
 pedido es **asíncrono**: el servidor acepta el trabajo enseguida, te da un `id`, y vos consultás
@@ -93,7 +90,7 @@ viene después.
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   -F video=@bbb_1080p.mp4 -F calidades=720,480 \
-  http://localhost:8082/videos
+  http://54.207.243.253:8082/videos
 ```
 
 ### Con una URL: `application/json` (segunda etapa)
@@ -167,7 +164,7 @@ Responde `200`, con `Content-Type: video/mp4` y
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" -o bbb_720p.mp4 \
-  http://localhost:8082/videos/3f9c2a7e5b1d4c8e9a0f6b2d1e7c4a93/720
+  http://54.207.243.253:8082/videos/3f9c2a7e5b1d4c8e9a0f6b2d1e7c4a93/720
 ```
 
 Si el trabajo todavía no terminó: `409 RESULTADO_NO_LISTO`. Si esa calidad no se pidió:
@@ -216,20 +213,6 @@ en los dos hits:
 ```json
 "videos": {"en_cola": 3, "procesando": 2, "max_simultaneos": 2, "max_en_cola": 20}
 ```
-
-## 8. Para acordar
-
-1. **El cliente no elige la imagen.** En `/getRemoteTask` el cliente manda `imagen`. Acá la imagen de
-   ffmpeg la fija el servidor (`cerberusdistribuido/tarea-video:1.0.0`), para que el cliente no tenga
-   que conocerla. ¿Les sirve así o prefieren mandarla?
-2. **Pedir una calidad mayor que el original es un rechazo** (`422`), no una calidad salteada. Es más
-   simple de probar. La otra opción es generar las calidades que se puedan y marcar las demás como
-   `omitida`.
-3. **Los números de los límites** (§3) están pensados para que los videos de prueba de 10 min, de
-   240p a 4K, entren todos. ¿Les cierran?
-4. **`calidades` en multipart** va como `720,480`, y en JSON como lista `[720, 480]`.
-5. **No hay `DELETE /videos/{id}`** (cancelar o borrar) ni `GET /videos` (listar los trabajos propios)
-   en esta versión.
 
 ---
 
