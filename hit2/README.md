@@ -367,14 +367,14 @@ Para reproducir la evaluación completa:
 ```bash
 ./evidencias/r5_matriz_parametros.sh hit2
 # O contra el servidor público desplegado:
-# TP2_SERVIDOR="http://18.231.127.74:8082" ./evidencias/r5_matriz_parametros.sh
+# TP2_SERVIDOR="http://54.207.243.253:8082" ./evidencias/r5_matriz_parametros.sh
 ```
 
 ---
 
 ## 10. Despliegue
 
-Público en **http://18.231.127.74:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
+Público en **http://54.207.243.253:8082/health**, en la misma VM de AWS EC2 que el Hit 1 (`8081`) y el TP1 (`8080`), con 4 workers.
 
 ```mermaid
 flowchart LR

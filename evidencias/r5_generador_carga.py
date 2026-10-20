@@ -815,7 +815,7 @@ def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], sal
     lineas.append(
         "- **Timeout Contractual**: El servidor se ejecuta respetando `TP2_TIMEOUT_EJECUCION = 60` segundos (estipulado en el contrato público).\n"
         "- **Despliegue vs Local**: Las pruebas pueden ejecutarse localmente mediante Docker Compose o directamente contra el despliegue "
-        "remoto en AWS EC2 (`http://18.231.127.74:8082`) suministrando la variable `TP2_SERVIDOR`.\n"
+        "remoto en AWS EC2 (`http://54.207.243.253:8082`) suministrando la variable `TP2_SERVIDOR`.\n"
     )
 
     contenido = "\n".join(lineas) + "\n"

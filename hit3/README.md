@@ -377,7 +377,7 @@ obligatorio), y se valida en cada llamada, antes de leer el cuerpo.
 
 ## Despliegue
 
-En la misma VM de AWS EC2 que los Hits 1 y 2: **http://18.231.127.74:8083/health**. Como en los
+En la misma VM de AWS EC2 que los Hits 1 y 2: **http://54.207.243.253:8083/health**. Como en los
 hits anteriores, la VM trae sola la imagen que publica el CI:
 
 ```mermaid

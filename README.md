@@ -11,9 +11,9 @@ devuelve el resultado y borra el contenedor. El mismo servidor crece en tres pas
 
 | Hit | Qué agrega | Desplegado en |
 |---|---|---|
-| [Hit 1](hit1/) | El servidor y el servicio tarea. La imagen de la tarea es privada: el servidor la baja con su propio token, nunca con credenciales del cliente | `http://18.231.127.74:8081` |
-| [Hit 2](hit2/) | Concurrencia: un pool de N workers, una cola con exclusión mutua y relojes de Lamport. Mediciones de throughput con 1, 2, 4 y 8 workers, contra la ley de Amdahl | `http://18.231.127.74:8082` |
-| [Hit 3](hit3/) | Tolerancia a fallos: 3 instancias detrás de nginx y un coordinador elegido con Bully. Si se cae el coordinador o un nodo, las tareas siguen | `http://18.231.127.74:8083` |
+| [Hit 1](hit1/) | El servidor y el servicio tarea. La imagen de la tarea es privada: el servidor la baja con su propio token, nunca con credenciales del cliente | `http://54.207.243.253:8081` |
+| [Hit 2](hit2/) | Concurrencia: un pool de N workers, una cola con exclusión mutua y relojes de Lamport. Mediciones de throughput con 1, 2, 4 y 8 workers, contra la ley de Amdahl | `http://54.207.243.253:8082` |
+| [Hit 3](hit3/) | Tolerancia a fallos: 3 instancias detrás de nginx y un coordinador elegido con Bully. Si se cae el coordinador o un nodo, las tareas siguen | `http://54.207.243.253:8083` |
 
 **Qué se le puede pedir a cada uno, y qué contesta, está en el [contrato público](contrato-publico.md).**
 
