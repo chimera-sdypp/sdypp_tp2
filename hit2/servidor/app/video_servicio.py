@@ -12,6 +12,7 @@ Implementa el ciclo de vida completo de los trabajos de video según contrato-vi
 """
 
 from datetime import datetime, timezone, timedelta
+import http.client
 import ipaddress
 import json
 import os
@@ -29,6 +30,7 @@ from urllib.parse import urlparse
 from app.config import Config
 from app.errores import ErrorApi, TipoError
 from app.imagenes import parsear as parsear_imagen
+from app.lanzador import EjecucionVencida
 from app.pool import PoolWorkers
 
 # Alturas estándar permitidas según contrato §2
@@ -66,6 +68,70 @@ class RedireccionSeguraHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def ip_permitida(ip_str: str) -> bool:
+    """Solo direcciones públicas: nada privado, loopback, link-local, reservado ni sin especificar."""
+    ip = ipaddress.ip_address(ip_str)
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified)
+
+
+def _conectar_a_ip_publica(direccion, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, **_):
+    """Reemplazo de socket.create_connection: resuelve una vez, valida y conecta a esa misma IP.
+
+    Validar el host antes y dejar que urllib lo resuelva de nuevo al conectar abre una ventana
+    para DNS rebinding. Acá la IP validada es la que se usa.
+    """
+    host, puerto = direccion
+    try:
+        resueltas = socket.getaddrinfo(host, puerto, type=socket.SOCK_STREAM)
+    except socket.gaierror as err:
+        raise OSError(f"no se pudo resolver el host {host}") from err
+    for *_, sockaddr in resueltas:
+        if not ip_permitida(sockaddr[0]):
+            raise ErrorApi(TipoError.URL_INVALIDA, f"la URL apunta a una dirección IP no permitida ({sockaddr[0]})")
+    ultimo_error = OSError(f"no se pudo conectar con {host}")
+    for *_, sockaddr in resueltas:
+        try:
+            return socket.create_connection(sockaddr[:2], timeout, source_address)
+        except OSError as err:
+            ultimo_error = err
+    raise ultimo_error
+
+
+class _ConexionHTTPSegura(http.client.HTTPConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _conectar_a_ip_publica
+
+
+class _ConexionHTTPSSegura(http.client.HTTPSConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _conectar_a_ip_publica
+
+
+class _HandlerHTTPSeguro(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_ConexionHTTPSegura, req)
+
+
+class _HandlerHTTPSSeguro(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_ConexionHTTPSSegura, req, context=self._context)
+
+
+def opener_seguro(validar_fn, tipo_error: TipoError) -> urllib.request.OpenerDirector:
+    """Opener que solo conecta a IPs públicas y revalida cada redirección (SSRF).
+
+    Sin proxies: con un proxy, la IP que se valida sería la del proxy y no la del destino.
+    """
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _HandlerHTTPSeguro(),
+        _HandlerHTTPSSeguro(),
+        RedireccionSeguraHandler(validar_fn, max_redirecciones=3, tipo_error=tipo_error),
+    )
+
+
 def ahora_iso() -> str:
     """Devuelve la fecha y hora actual en UTC con formato estándar ISO 8601 (terminada en Z)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -83,28 +149,59 @@ def calcular_expiracion_iso(fin_iso: Optional[str], horas_retencion: int = 24) -
         return None
 
 
-def ffprobe_default(ruta_archivo: str) -> dict:
-    """Ejecuta ffprobe sobre el archivo o URL y extrae metadatos en JSON.
-    
-    Aislamiento de Seguridad:
-    - Para URLs remotas se autoriza únicamente 'http,https,tcp,tls', excluyendo estrictamente
-      'file' para impedir lecturas arbitrarias de archivos locales vía playlists HLS (CVE-2016-1897).
-    - Para archivos locales en disco se restringe a 'file,crypto', bloqueando peticiones de red externas.
+def _correr_con_flujo(comando: List[str], flujo, timeout: float) -> subprocess.CompletedProcess:
+    """Corre el comando pasándole el flujo por stdin desde un hilo.
+
+    ffprobe sale apenas tiene los metadatos: el hilo deja de leer cuando se rompe el pipe.
     """
-    es_url = str(ruta_archivo).startswith("http://") or str(ruta_archivo).startswith("https://")
-    whitelist = "http,https,tcp,tls" if es_url else "file,crypto"
+    lectura, escritura = os.pipe()
+    proceso = subprocess.Popen(comando, stdin=lectura, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    os.close(lectura)
+
+    def alimentar():
+        try:
+            with os.fdopen(escritura, "wb") as destino:
+                while bloque := flujo.read(65536):
+                    destino.write(bloque)
+        except Exception:
+            # Pipe roto (ffprobe ya terminó) o la conexión se cortó: ffprobe ve EOF
+            pass
+
+    threading.Thread(target=alimentar, name="ffprobe-flujo", daemon=True).start()
+    try:
+        salida, errores = proceso.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proceso.kill()
+        proceso.communicate()
+        raise
+    return subprocess.CompletedProcess(comando, proceso.returncode, salida, errores)
+
+
+def ffprobe_default(fuente) -> dict:
+    """Ejecuta ffprobe y extrae metadatos en JSON.
+
+    `fuente` es una ruta local o un flujo con read() (la respuesta HTTP ya abierta con el
+    opener seguro). Nunca una URL: ffprobe resolvería el DNS y seguiría redirecciones y
+    playlists HLS por su cuenta, salteando las validaciones de SSRF.
+    - Ruta local: solo 'file,crypto', sin red.
+    - Flujo: solo 'pipe'. Un mp4 sin faststart obliga a leerlo entero, de ahí el timeout mayor.
+    """
+    es_flujo = hasattr(fuente, "read")
     comando = [
         "ffprobe",
         "-v", "error",
-        "-protocol_whitelist", whitelist,
+        "-protocol_whitelist", "pipe" if es_flujo else "file,crypto",
         "-select_streams", "v:0",
         "-show_entries", "stream=width,height,duration",
         "-show_entries", "format=duration,size",
         "-of", "json",
-        str(ruta_archivo),
+        "pipe:0" if es_flujo else str(fuente),
     ]
     try:
-        res = subprocess.run(comando, capture_output=True, text=True, timeout=15)
+        if es_flujo:
+            res = _correr_con_flujo(comando, fuente, timeout=60)
+        else:
+            res = subprocess.run(comando, capture_output=True, text=True, timeout=15)
         if res.returncode != 0:
             raise ErrorApi(
                 TipoError.ARCHIVO_NO_ES_VIDEO,
@@ -280,9 +377,15 @@ class VideoServicio:
             entradas = list(os.scandir(self.dir_trabajos))
         except OSError:
             return 0
+        # Un trabajo con la cuota reservada está vivo: o se está subiendo (todavía sin estado.json,
+        # y el mtime del directorio no cambia mientras se escribe `entrada`) o está en curso.
+        with self._mutex_usuarios:
+            en_curso = set().union(*self._trabajos_activos_por_usuario.values())
 
         for entrada in entradas:
             if not entrada.is_dir() or not RE_ID_TRABAJO.fullmatch(entrada.name):
+                continue
+            if entrada.name in en_curso:
                 continue
             ruta_estado = os.path.join(entrada.path, "estado.json")
             if not os.path.exists(ruta_estado):
@@ -408,14 +511,7 @@ class VideoServicio:
             ips = socket.getaddrinfo(hostname, None)
             for info in ips:
                 ip_str = info[4][0]
-                ip_obj = ipaddress.ip_address(ip_str)
-                if (
-                    ip_obj.is_private
-                    or ip_obj.is_loopback
-                    or ip_obj.is_link_local
-                    or ip_obj.is_reserved
-                    or ip_obj.is_unspecified
-                ):
+                if not ip_permitida(ip_str):
                     raise ErrorApi(
                         TipoError.URL_INVALIDA,
                         f"la URL apunta a una dirección IP no permitida ({ip_str})"
@@ -501,76 +597,33 @@ class VideoServicio:
             base = f"{nombre_p[:90]}{ext}"
         return base
 
-    def _verificar_redirecciones_url(self, url: str) -> None:
-        """Verifica de forma segura que la URL responda y que ninguna redirección apunte a IPs privadas/loopback (SSRF)."""
-        if self.url_opener is not None:
-            opener = self.url_opener
-        else:
-            opener = urllib.request.build_opener(
-                RedireccionSeguraHandler(
-                    self.validar_url,
-                    max_redirecciones=3,
-                    tipo_error=TipoError.URL_INACCESIBLE,
-                )
-            )
-
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "CerberusVideo/1.0", "Range": "bytes=0-1024"},
-            method="HEAD",
-        )
-        try:
-            with opener.open(req, timeout=10) as resp:
-                status = getattr(resp, "status", getattr(resp, "code", 200))
-                if status >= 400:
-                    raise ErrorApi(
-                        TipoError.URL_INACCESIBLE,
-                        f"la URL {url} devolvió un error HTTP {status}"
-                    )
-        except urllib.error.HTTPError as err:
-            # Si el servidor remoto rechaza HEAD (405) o Range (416), reintentamos con GET
-            if err.code in (405, 416, 501):
-                try:
-                    req_get = urllib.request.Request(
-                        url,
-                        headers={"User-Agent": "CerberusVideo/1.0", "Range": "bytes=0-1024"}
-                    )
-                    with opener.open(req_get, timeout=10) as resp_get:
-                        status = getattr(resp_get, "status", getattr(resp_get, "code", 200))
-                        if status >= 400:
-                            raise ErrorApi(
-                                TipoError.URL_INACCESIBLE,
-                                f"la URL {url} devolvió un error HTTP {status}"
-                            )
-                except ErrorApi:
-                    raise
-                except Exception as ex_get:
-                    raise ErrorApi(
-                        TipoError.URL_INACCESIBLE,
-                        f"la URL {url} no responde o devolvió un error: {ex_get}",
-                        interno=str(ex_get),
-                    )
-            else:
-                raise ErrorApi(
-                    TipoError.URL_INACCESIBLE,
-                    f"la URL {url} devolvió un error HTTP {err.code}",
-                    interno=str(err),
-                )
-        except ErrorApi:
-            raise
-        except Exception as err:
-            raise ErrorApi(
-                TipoError.URL_INACCESIBLE,
-                f"la URL {url} no responde o no es accesible: {err}",
-                interno=str(err),
-            )
+    def _abrir_url(self, url: str, tipo_error: TipoError, timeout: float):
+        """Abre la URL con el opener seguro: IP validada al conectar y cada redirección revalidada (SSRF)."""
+        opener = self.url_opener or opener_seguro(self.validar_url, tipo_error)
+        req = urllib.request.Request(url, headers={"User-Agent": "CerberusVideo/1.0"})
+        return opener.open(req, timeout=timeout)
 
     def validar_url_y_metadatos(self, url: str, calidades: List[int]) -> dict:
-        """Valida que la URL sea pública, responda y contenga un video compatible (contrato §4)."""
+        """Valida que la URL sea pública, responda y contenga un video compatible (contrato §4).
+
+        ffprobe lee los bytes de la respuesta que abrió el servidor, nunca la URL: así no hay
+        conexiones que no pasen por las validaciones de SSRF.
+        """
         self.validar_url(url)
-        self._verificar_redirecciones_url(url)
         try:
-            info = self.ffprobe(url)
+            with self._abrir_url(url, TipoError.URL_INACCESIBLE, timeout=10) as resp:
+                status = getattr(resp, "status", getattr(resp, "code", 200))
+                if status >= 400:
+                    raise ErrorApi(TipoError.URL_INACCESIBLE, f"la URL {url} devolvió un error HTTP {status}")
+                cabeceras = getattr(resp, "headers", None)
+                largo = cabeceras.get("Content-Length") if cabeceras is not None else None
+                bytes_val = int(largo) if largo and largo.isdigit() else 0
+                if bytes_val > self.config.video_tamano_max_bytes:
+                    raise ErrorApi(
+                        TipoError.VIDEO_DEMASIADO_GRANDE,
+                        f"el archivo en la URL supera el límite de {self.config.video_tamano_max_bytes} bytes"
+                    )
+                info = self.ffprobe(resp)
         except ErrorApi as err:
             if err.tipo == TipoError.ARCHIVO_NO_ES_VIDEO:
                 raise ErrorApi(
@@ -579,6 +632,12 @@ class VideoServicio:
                     interno=err.interno,
                 )
             raise
+        except urllib.error.HTTPError as err:
+            raise ErrorApi(
+                TipoError.URL_INACCESIBLE,
+                f"la URL {url} devolvió un error HTTP {err.code}",
+                interno=str(err),
+            )
         except Exception as err:
             raise ErrorApi(
                 TipoError.URL_INACCESIBLE,
@@ -638,19 +697,6 @@ class VideoServicio:
                     TipoError.CALIDAD_SUPERIOR_AL_ORIGINAL,
                     f"la calidad {c}p solicitada supera la altura del video original ({alto}p)"
                 )
-
-        bytes_val = 0
-        size_str = info.get("format", {}).get("size")
-        if size_str:
-            try:
-                bytes_val = int(size_str)
-                if bytes_val > self.config.video_tamano_max_bytes:
-                    raise ErrorApi(
-                        TipoError.VIDEO_DEMASIADO_GRANDE,
-                        f"el archivo en la URL supera el límite de {self.config.video_tamano_max_bytes} bytes"
-                    )
-            except ValueError:
-                pass
 
         import posixpath
         from urllib.parse import urlparse
@@ -730,6 +776,10 @@ class VideoServicio:
         from python_multipart import MultipartParser
         from python_multipart.multipart import parse_options_header
         from starlette.concurrency import run_in_threadpool
+
+        # Sin cuerpo es 400 CUERPO_VACIO (§6), igual que en el modo URL; el chunked vacío se ve al leerlo
+        if request.headers.get("content-length", "").strip() == "0":
+            raise ErrorApi(TipoError.CUERPO_VACIO, "el cuerpo no puede estar vacío")
 
         content_type = request.headers.get("content-type", "")
         _, params = parse_options_header(content_type)
@@ -839,8 +889,12 @@ class VideoServicio:
 
         try:
             # Procesar la escritura de chunks en threadpool para liberar el event loop de FastAPI
+            recibidos = 0
             async for chunk in request.stream():
+                recibidos += len(chunk)
                 await run_in_threadpool(parser.write, chunk)
+            if recibidos == 0:
+                raise ErrorApi(TipoError.CUERPO_VACIO, "el cuerpo no puede estar vacío")
             await run_in_threadpool(parser.finalize)
         except ErrorApi:
             raise
@@ -989,28 +1043,17 @@ class VideoServicio:
         }
 
     def _descargar_video_url(self, url: str, ruta_destino: str) -> None:
-        """Descarga el video desde una URL pública a disco con verificación de límites y mitigación anti-SSRF."""
-        # Revalidar la URL inmediatamente antes de iniciar la conexión (mitigación contra DNS rebinding)
-        self.validar_url(url)
+        """Descarga el video desde una URL pública a disco con verificación de límites y mitigación anti-SSRF.
 
-        if self.url_opener is not None:
-            opener = self.url_opener
-        else:
-            opener = urllib.request.build_opener(
-                RedireccionSeguraHandler(
-                    self.validar_url,
-                    max_redirecciones=3,
-                    tipo_error=TipoError.DESCARGA_FALLIDA,
-                )
-            )
-
+        Cualquier falla acá es DESCARGA_FALLIDA (§6): el trabajo ya se aceptó, así que una URL que
+        ahora apunta a otro lado o un archivo que creció más allá del límite es "el contenido cambió".
+        """
         try:
-            import time
-            req = urllib.request.Request(url, headers={"User-Agent": "CerberusVideo/1.0"})
+            self.validar_url(url)
             bytes_descargados = 0
             inicio_descarga = time.time()
             max_segundos_descarga = 300.0
-            with opener.open(req, timeout=30) as resp:
+            with self._abrir_url(url, TipoError.DESCARGA_FALLIDA, timeout=30) as resp:
                 status = getattr(resp, "status", getattr(resp, "code", 200))
                 if status != 200:
                     raise ErrorApi(
@@ -1030,28 +1073,26 @@ class VideoServicio:
                         bytes_descargados += len(chunk)
                         if bytes_descargados > self.config.video_tamano_max_bytes:
                             raise ErrorApi(
-                                TipoError.VIDEO_DEMASIADO_GRANDE,
-                                f"el archivo descargado supera el límite de {self.config.video_tamano_max_bytes} bytes"
+                                TipoError.DESCARGA_FALLIDA,
+                                f"el video de la URL cambió: la descarga ya supera el límite de "
+                                f"{self.config.video_tamano_max_bytes} bytes"
                             )
                         f_out.write(chunk)
-        except ErrorApi:
-            if os.path.exists(ruta_destino):
-                try:
-                    os.remove(ruta_destino)
-                except OSError:
-                    pass
-            raise
         except Exception as err:
             if os.path.exists(ruta_destino):
                 try:
                     os.remove(ruta_destino)
                 except OSError:
                     pass
+            if isinstance(err, ErrorApi) and err.tipo == TipoError.DESCARGA_FALLIDA:
+                raise
+            if isinstance(err, ErrorApi):
+                raise ErrorApi(TipoError.DESCARGA_FALLIDA, err.mensaje, interno=err.interno) from None
             raise ErrorApi(
                 TipoError.DESCARGA_FALLIDA,
                 f"falló la descarga del video desde la URL: {err}",
                 interno=str(err)
-            )
+            ) from None
 
     def _ejecutar_transcodificacion(
         self,
@@ -1129,7 +1170,9 @@ class VideoServicio:
 
             if error:
                 estado["estado"] = "error"
-                if isinstance(error, ErrorApi) and error.tipo == TipoError.TAREA_SIN_RESPUESTA:
+                # Solo si la tarea arrancó y no terminó a tiempo; un contenedor que no llega a
+                # arrancar también es TAREA_SIN_RESPUESTA, pero no es "superó los 60 min"
+                if isinstance(error, EjecucionVencida):
                     estado["error"] = {
                         "tipo": "TIEMPO_AGOTADO",
                         "mensaje": "el procesamiento superó el tiempo máximo permitido",
@@ -1174,14 +1217,12 @@ class VideoServicio:
         finally:
             self._liberar_trabajo_activo(usuario, id_trabajo)
 
-    # --------------------------------------------------------------------------
-    # Consulta de Estado (GET /videos/{id})
-    # --------------------------------------------------------------------------
-    def consultar_trabajo(self, id_trabajo: str, usuario_solicitante: str, es_admin: bool) -> Tuple[dict, Optional[str]]:
-        """Consulta el estado del trabajo, verificando propiedad y expiración.
-        
-        Retorna:
-          Tupla (contenido_diccionario, retry_after_header_si_aplica)
+    def _leer_trabajo(self, id_trabajo: str, usuario_solicitante: str, es_admin: bool) -> Tuple[str, dict]:
+        """Lee el estado.json de un trabajo que el usuario puede ver.
+
+        Un trabajo de otro usuario, inexistente o vencido da 404 TRABAJO_INEXISTENTE (§3 y §6). Uno
+        vencido se borra acá mismo, sin esperar al recolector, para que nunca se pueda bajar.
+        Retorna (dir_trabajo, estado).
         """
         if not RE_ID_TRABAJO.fullmatch(id_trabajo):
             raise ErrorApi(TipoError.TRABAJO_INEXISTENTE, f"trabajo {id_trabajo} no encontrado")
@@ -1211,6 +1252,20 @@ class VideoServicio:
                     raise ErrorApi(TipoError.TRABAJO_INEXISTENTE, f"el trabajo {id_trabajo} expiró y fue purgado")
             except ValueError:
                 pass
+
+        return dir_trabajo, estado
+
+    # --------------------------------------------------------------------------
+    # Consulta de Estado (GET /videos/{id})
+    # --------------------------------------------------------------------------
+    def consultar_trabajo(self, id_trabajo: str, usuario_solicitante: str, es_admin: bool) -> Tuple[dict, Optional[str]]:
+        """Consulta el estado del trabajo, verificando propiedad y expiración.
+        
+        Retorna:
+          Tupla (contenido_diccionario, retry_after_header_si_aplica)
+        """
+        dir_trabajo, estado = self._leer_trabajo(id_trabajo, usuario_solicitante, es_admin)
+        fin_iso = estado.get("tiempos", {}).get("fin")
 
         estado_str = estado.get("estado")
         progreso = None
@@ -1258,23 +1313,7 @@ class VideoServicio:
     # --------------------------------------------------------------------------
     def preparar_descarga(self, id_trabajo: str, calidad: int, usuario_solicitante: str, es_admin: bool) -> Tuple[str, str]:
         """Verifica disponibilidad y retorna la ruta del archivo y el nombre de descarga."""
-        if not RE_ID_TRABAJO.fullmatch(id_trabajo):
-            raise ErrorApi(TipoError.TRABAJO_INEXISTENTE, f"trabajo {id_trabajo} no encontrado")
-
-        dir_trabajo = os.path.join(self.dir_trabajos, id_trabajo)
-        ruta_estado = os.path.join(dir_trabajo, "estado.json")
-        if not os.path.exists(ruta_estado):
-            raise ErrorApi(TipoError.TRABAJO_INEXISTENTE, f"trabajo {id_trabajo} no encontrado")
-
-        try:
-            with open(ruta_estado, "r", encoding="utf-8") as f:
-                estado = json.load(f)
-        except Exception:
-            raise ErrorApi(TipoError.TRABAJO_INEXISTENTE, f"trabajo {id_trabajo} no se puede leer")
-
-        # Autorización
-        if not es_admin and estado.get("usuario") != usuario_solicitante:
-            raise ErrorApi(TipoError.TRABAJO_INEXISTENTE, f"trabajo {id_trabajo} no encontrado")
+        dir_trabajo, estado = self._leer_trabajo(id_trabajo, usuario_solicitante, es_admin)
 
         # Calidad solicitada en el pedido original
         calidades = estado.get("calidades", [])

@@ -28,10 +28,10 @@ from fastapi.testclient import TestClient
 
 from app.config import Config
 from app.errores import ErrorApi, TipoError
-from app.lanzador import Ejecucion
+from app.lanzador import Ejecucion, EjecucionVencida
 from app.main import crear_app
 from app.pool import PoolWorkers
-from app.video_servicio import VideoServicio, RedireccionSeguraHandler
+from app.video_servicio import VideoServicio, RedireccionSeguraHandler, ffprobe_default
 
 SECRETO = "secreto-de-prueba-de-al-menos-32-caracteres"
 
@@ -854,7 +854,7 @@ def test_falla_durante_procesamiento_marca_error(entorno_video):
 
 def test_tiempo_agotado_marca_error_tiempo_agotado(entorno_video):
     """Si la tarea supera los 60 min, el estado pasa a error con TIEMPO_AGOTADO (§6)."""
-    err_timeout = ErrorApi(TipoError.TAREA_SIN_RESPUESTA, "timeout agotado")
+    err_timeout = EjecucionVencida(TipoError.TAREA_SIN_RESPUESTA, "timeout agotado")
     lanzador_timeout = LanzadorVideoFalso(error=err_timeout)
     cliente, _, _, _, _ = entorno_video(lanzador=lanzador_timeout)
 
@@ -1242,3 +1242,203 @@ def test_aislamiento_de_nodos_en_recuperacion_arranque(tmp_path):
     assert estado_post["error"] is None
 
 
+
+
+# ==============================================================================
+# 8. Correcciones de la revisión del PR #19
+# ==============================================================================
+
+ADDRINFO_PUBLICA = [(2, 1, 6, "", ("93.184.216.34", 0))]
+ADDRINFO_PRIVADA = [(2, 1, 6, "", ("10.0.0.5", 0))]
+
+
+def test_contenedor_que_no_arranca_no_es_tiempo_agotado(entorno_video):
+    """TAREA_SIN_RESPUESTA porque el contenedor no llegó a arrancar no es "superó los 60 min" (§6)."""
+    err_arranque = ErrorApi(TipoError.TAREA_SIN_RESPUESTA, "la tarea no estuvo lista en 30 s")
+    cliente, _, _, _, _ = entorno_video(lanzador=LanzadorVideoFalso(error=err_arranque))
+
+    res = cliente.post("/videos", files={"video": ("v.mp4", b"b", "video/mp4")}, data={"calidades": "720"})
+    id_t = res.json()["contenido"]["id"]
+    time.sleep(0.15)
+
+    error = cliente.get(f"/videos/{id_t}").json()["contenido"]["error"]
+    assert error["tipo"] == "TRANSCODIFICACION_FALLIDA"
+    assert "no estuvo lista" in error["mensaje"]
+
+
+def test_multipart_sin_cuerpo_400_cuerpo_vacio(entorno_video):
+    """Un POST multipart sin cuerpo es 400 CUERPO_VACIO, como en el modo URL (§6)."""
+    cliente, v_servicio, _, _, _ = entorno_video()
+
+    res = cliente.post("/videos", content=b"", headers={"Content-Type": "multipart/form-data; boundary=x"})
+
+    assert res.status_code == 400
+    assert res.json()["contenido"]["error"]["tipo"] == "CUERPO_VACIO"
+    assert v_servicio.trabajos_activos_de("ana") == 0
+    assert os.listdir(v_servicio.dir_trabajos) == []
+
+
+def test_descarga_de_trabajo_vencido_404_aunque_no_haya_pasado_el_recolector(entorno_video):
+    """Pasada la retención, la descarga da 404 TRABAJO_INEXISTENTE y el trabajo se borra (§3)."""
+    cliente, v_servicio, _, _, _ = entorno_video()
+    id_viejo = "d" * 32
+    dir_v = os.path.join(v_servicio.dir_trabajos, id_viejo)
+    os.makedirs(os.path.join(dir_v, "salida"))
+    with open(os.path.join(dir_v, "salida", "720.mp4"), "wb") as f:
+        f.write(b"mp4")
+    hace_25h = (datetime.now(timezone.utc) - timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(os.path.join(dir_v, "estado.json"), "w", encoding="utf-8") as f:
+        json.dump({"id": id_viejo, "usuario": "ana", "estado": "listo", "calidades": [720],
+                   "tiempos": {"creado": hace_25h, "inicio": hace_25h, "fin": hace_25h}}, f)
+
+    res = cliente.get(f"/videos/{id_viejo}/720")
+
+    assert res.status_code == 404
+    assert res.json()["contenido"]["error"]["tipo"] == "TRABAJO_INEXISTENTE"
+    assert not os.path.exists(dir_v)
+
+
+def test_recolector_no_borra_una_subida_en_curso(entorno_video):
+    """Una subida larga todavía no tiene estado.json y el mtime de su directorio no cambia
+    mientras se escribe `entrada`: el recolector no la tiene que confundir con un huérfano."""
+    _, v_servicio, _, _, _ = entorno_video()
+    id_subiendo = "e" * 32
+    dir_s = os.path.join(v_servicio.dir_trabajos, id_subiendo)
+    os.makedirs(dir_s)
+    with open(os.path.join(dir_s, "entrada"), "wb") as f:
+        f.write(b"medio video")
+    hace_2h = time.time() - 7200
+    os.utime(dir_s, (hace_2h, hace_2h))
+    v_servicio.reservar_cuota_usuario("ana", id_subiendo)
+
+    assert v_servicio.purgar_vencidos() == 0
+    assert os.path.exists(dir_s)
+
+    # Si la subida se abortó sin limpiar (cuota liberada), sí es un huérfano
+    v_servicio.liberar_cuota_usuario("ana", id_subiendo)
+    assert v_servicio.purgar_vencidos() == 1
+    assert not os.path.exists(dir_s)
+
+
+class _RespuestaInfinita:
+    """Respuesta HTTP falsa que nunca termina: simula un archivo que crece durante la descarga."""
+    status = 200
+    headers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def read(self, *args):
+        return b"x" * 64
+
+
+def test_video_que_crece_durante_la_descarga_es_descarga_fallida(entorno_video, tmp_path):
+    """Si al descargar el archivo pasa el límite, el contenido cambió: DESCARGA_FALLIDA (§6)."""
+    from unittest.mock import patch
+
+    class Opener:
+        def open(self, req, timeout=None):
+            return _RespuestaInfinita()
+
+    _, v_servicio, _, _, _ = entorno_video(url_opener=Opener(), tamano_max=1000)
+    destino = tmp_path / "entrada"
+
+    with patch("socket.getaddrinfo", return_value=ADDRINFO_PUBLICA):
+        with pytest.raises(ErrorApi) as exc:
+            v_servicio._descargar_video_url("https://cdn.ejemplo.com/v.mp4", str(destino))
+
+    assert exc.value.tipo == TipoError.DESCARGA_FALLIDA
+    assert not destino.exists()
+
+
+def test_url_que_ahora_resuelve_a_privada_al_descargar_es_descarga_fallida(entorno_video, tmp_path):
+    """Una URL aceptada que al descargar apunta a una IP privada falla como DESCARGA_FALLIDA,
+    no como TRANSCODIFICACION_FALLIDA (§6)."""
+    from unittest.mock import patch
+
+    _, v_servicio, _, _, _ = entorno_video()
+
+    with patch("socket.getaddrinfo", return_value=ADDRINFO_PRIVADA):
+        with pytest.raises(ErrorApi) as exc:
+            v_servicio._descargar_video_url("https://cdn.ejemplo.com/v.mp4", str(tmp_path / "entrada"))
+
+    assert exc.value.tipo == TipoError.DESCARGA_FALLIDA
+
+
+def test_ffprobe_de_url_recibe_la_respuesta_y_no_la_url(entorno_video):
+    """ffprobe no puede abrir la URL por su cuenta: recibe la respuesta que abrió el servidor (SSRF)."""
+    from unittest.mock import patch
+
+    recibido = []
+    probe_base = ffprobe_falso_fabrica()
+
+    def probe(fuente):
+        recibido.append(fuente)
+        return probe_base(fuente)
+
+    cliente, _, _, _, _ = entorno_video(ffprobe_runner=probe)
+    with patch("socket.getaddrinfo", return_value=ADDRINFO_PUBLICA):
+        res = cliente.post("/videos", json={"url": "https://cdn.ejemplo.com/v.mp4", "calidades": [720]})
+
+    assert res.status_code == 202, res.text
+    assert len(recibido) == 1
+    assert hasattr(recibido[0], "read") and not isinstance(recibido[0], str)
+
+
+def test_dns_rebinding_entre_validar_y_conectar_se_rechaza(entorno_video):
+    """Si el host resuelve a una IP pública al validar y a una privada al conectar, la conexión
+    se rechaza: la IP que se valida es la misma a la que se conecta (§4)."""
+    from unittest.mock import patch
+
+    cliente, v_servicio, _, _, _ = entorno_video()
+    v_servicio.url_opener = None  # el opener real, con la conexión validada
+    respuestas = iter([ADDRINFO_PUBLICA, ADDRINFO_PRIVADA])
+
+    with patch("socket.getaddrinfo", side_effect=lambda *a, **k: next(respuestas)):
+        res = cliente.post("/videos", json={"url": "http://rebind.ejemplo.com/v.mp4", "calidades": [720]})
+
+    assert res.status_code == 422
+    assert res.json()["contenido"]["error"]["tipo"] == "URL_INVALIDA"
+    assert "10.0.0.5" in res.json()["contenido"]["error"]["mensaje"]
+
+
+@pytest.mark.skipif(shutil.which("ffprobe") is None or shutil.which("ffmpeg") is None,
+                    reason="hace falta ffmpeg en el host")
+def test_ffprobe_real_lee_metadatos_desde_un_flujo(tmp_path):
+    """Con ffprobe real: un mp4 sin faststart se lee por pipe con su resolución y duración."""
+    import subprocess
+
+    video = tmp_path / "v.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:d=2:r=10",
+                    "-c:v", "libx264", "-preset", "ultrafast", str(video)], check=True)
+
+    with open(video, "rb") as flujo:
+        info = ffprobe_default(flujo)
+
+    assert info["streams"][0]["width"] == 320
+    assert info["streams"][0]["height"] == 240
+    assert float(info["format"]["duration"]) == pytest.approx(2.0, abs=0.2)
+
+
+@pytest.mark.skipif(shutil.which("ffprobe") is None, reason="hace falta ffprobe en el host")
+def test_ffprobe_real_no_sigue_una_playlist_hls_hacia_la_red():
+    """Una playlist HLS que apunta a un servicio interno no hace que ffprobe se conecte (SSRF)."""
+    import socket
+
+    servicio_interno = socket.socket()
+    servicio_interno.bind(("127.0.0.1", 0))
+    servicio_interno.listen()
+    servicio_interno.setblocking(False)
+    puerto = servicio_interno.getsockname()[1]
+    playlist = f"#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://127.0.0.1:{puerto}/s.ts\n#EXT-X-ENDLIST\n"
+
+    try:
+        with pytest.raises(ErrorApi):
+            ffprobe_default(io.BytesIO(playlist.encode()))
+        with pytest.raises(BlockingIOError):
+            servicio_interno.accept()
+    finally:
+        servicio_interno.close()

@@ -83,6 +83,14 @@ class Vencido(Exception):
     """Excepción interna lanzada cuando el contenedor agota el tiempo límite de respuesta (timeout)."""
 
 
+class EjecucionVencida(ErrorApi):
+    """TAREA_SIN_RESPUESTA porque la tarea arrancó pero no terminó a tiempo.
+
+    Para /getRemoteTask es lo mismo que no haber arrancado (504), pero el servicio de video
+    necesita distinguirlo: solo este caso es TIEMPO_AGOTADO (contrato-video.md §3).
+    """
+
+
 def http_json(metodo, url, cuerpo=None, timeout=5.0):
     """Cliente HTTP síncrono ultra-liviano basado en la biblioteca estándar `urllib.request`.
     
@@ -382,8 +390,8 @@ class Lanzador:
                                             timeout=t_espera)
         except Vencido:
             # Excedió el tiempo límite máximo de procesamiento de la tarea
-            raise ErrorApi(TipoError.TAREA_SIN_RESPUESTA,
-                           f"la tarea no respondió en {t_espera:g} s") from None
+            raise EjecucionVencida(TipoError.TAREA_SIN_RESPUESTA,
+                                   f"la tarea no respondió en {t_espera:g} s") from None
         except SinConexion as error:
             # Conexión reseteada o contenedor caído durante la ejecución
             raise ErrorApi(TipoError.TAREA_FALLIDA, "se perdió la conexión con la tarea",
