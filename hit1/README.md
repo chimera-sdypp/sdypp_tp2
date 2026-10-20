@@ -233,7 +233,7 @@ obligatorio), y se valida en cada llamada, antes de leer el cuerpo.
 
 ## Despliegue
 
-Público en **http://18.231.127.74:8081/health**, en la misma VM de AWS EC2 que el TP1 (que sigue en
+Público en **http://54.207.243.253:8081/health**, en la misma VM de AWS EC2 que el TP1 (que sigue en
 el 8080).
 
 ```mermaid

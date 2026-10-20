@@ -28,11 +28,11 @@ info:
     Más detalle (tabla completa de errores, qué significa cada tiempo y "lo que falta") en
     `contrato-publico.md`.
 servers:
-  - url: http://18.231.127.74:8081
+  - url: http://54.207.243.253:8081
     description: Hit 1
-  - url: http://18.231.127.74:8082
+  - url: http://54.207.243.253:8082
     description: Hit 2
-  - url: http://18.231.127.74:8083
+  - url: http://54.207.243.253:8083
     description: Hit 3 (nginx)
 security:
   - bearer: []

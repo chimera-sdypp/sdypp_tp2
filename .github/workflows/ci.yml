@@ -108,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: hit1-imagen
     env:
-      TP2_SERVIDOR: ${{ vars.TP2_HIT1_URL || 'http://18.231.127.74:8081' }}
+      TP2_SERVIDOR: ${{ vars.TP2_HIT1_URL || 'http://54.207.243.253:8081' }}
     steps:
       - uses: actions/checkout@v4
       # Sin secretos: GitHub no tiene el JWT de la VM. Se prueba que está arriba y que no atiende
@@ -189,7 +189,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: hit2-imagen
     env:
-      TP2_SERVIDOR: ${{ vars.TP2_HIT2_URL || 'http://18.231.127.74:8082' }}
+      TP2_SERVIDOR: ${{ vars.TP2_HIT2_URL || 'http://54.207.243.253:8082' }}
     steps:
       - uses: actions/checkout@v4
       # Sin secretos: GitHub no tiene el JWT de la VM. Se prueba que está arriba y que no atiende
@@ -271,7 +271,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: hit3-imagen
     env:
-      TP2_SERVIDOR: ${{ vars.TP2_HIT3_URL || 'http://18.231.127.74:8083' }}
+      TP2_SERVIDOR: ${{ vars.TP2_HIT3_URL || 'http://54.207.243.253:8083' }}
     steps:
       - uses: actions/checkout@v4
       # Sin secretos: GitHub no tiene el JWT de la VM. Se prueba que está arriba y que no atiende
