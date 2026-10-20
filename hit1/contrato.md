@@ -27,11 +27,18 @@ error queda en el log del servidor.
 |---|---|
 | `POST /getRemoteTask` | `ejecutarTareaRemota()`: levanta el contenedor tarea, le pasa el trabajo y devuelve el resultado |
 | `GET /health` | Estado público `{servicio: estado}` |
+| `GET /stats` | Estadísticas del servidor (sólo rol `admin`): tareas ejecutadas y fallidas, por imagen, latencia promedio y p95, cola y workers, pedidos por código |
 
 Cualquier otra ruta → `404 RUTA_INEXISTENTE`. Un método que la ruta no soporta →
 `405 METODO_NO_PERMITIDO` con la cabecera `Allow`. Siempre en el sobre.
 
 ### `POST /getRemoteTask`
+
+**Autenticación (R4):** todo pedido salvo `GET /health` lleva `Authorization: Bearer <JWT>` (HS256 con `sub`, `role` y
+`exp`) y se valida en cada llamada. `usuario` ejecuta tareas; `admin` además ve `/stats`. Sin token o con uno inválido o vencido →
+`401 NO_AUTORIZADO`; rol insuficiente → `403 ROL_INSUFICIENTE`; más de `TP2_LIMITE_PEDIDOS_MIN` pedidos por minuto de un usuario →
+`429 DEMASIADOS_PEDIDOS` con `Retry-After`. Los campos, la tabla completa de errores y "lo que falta" están en el
+[contrato público](../contrato-publico.md).
 
 Cabecera obligatoria: `Content-Type: application/json`.
 
@@ -67,14 +74,16 @@ Respuestas:
 
 | Código | Cuándo | `contenido` / `contenido.error.tipo` |
 |---|---|---|
-| `200` | La tarea terminó | `{calculo, resultado}` |
+| `200` | La tarea terminó | `{`calculo`, `resultado`, `task_id`, `imagen`, `digest`, `imagen_id`, `contenedor`, `tiempos` {`en_cola_s`, `ejecucion_s`, `total_s`}}` (`en_cola_s` siempre `0.0`: no hay cola) |
 | `400` | Cuerpo vacío, JSON mal formado, claves duplicadas, `NaN`, demasiado anidado | `CUERPO_VACIO`, `JSON_INVALIDO` |
-| `403` | La imagen no está en la lista blanca | `IMAGEN_NO_PERMITIDA` |
+| `401` | Falta el token, no es un JWT, está firmado con otro secreto, no tiene `exp` o venció | `NO_AUTORIZADO` |
+| `403` | La imagen no está en la lista blanca, o no coincide con el digest que la lista fija; o el rol no alcanza | `IMAGEN_NO_PERMITIDA`, `ROL_INSUFICIENTE` |
 | `413` | Cuerpo de más de 64 KiB | `CUERPO_DEMASIADO_GRANDE` |
 | `415` | `Content-Type` distinto de `application/json` | `TIPO_DE_CONTENIDO` |
 | `422` | Falla la validación; la imagen no existe; la tarea rechazó los parámetros | `PAYLOAD_INVALIDO`, `IMAGEN_INEXISTENTE`, `TAREA_RECHAZADA` |
+| `429` | El usuario superó su límite de pedidos por minuto (`Retry-After`) | `DEMASIADOS_PEDIDOS` |
 | `500` | Error inesperado del servidor | `ERROR_INTERNO` |
-| `502` | La tarea falló o contestó algo inválido; el registry no respondió | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE` |
+| `502` | La tarea falló o contestó algo inválido; la imagen no es un servicio tarea; el registry no respondió | `TAREA_FALLIDA`, `REGISTRY_NO_DISPONIBLE` |
 | `503` | Docker no responde | `SERVICIO_NO_DISPONIBLE` |
 | `504` | El contenedor no quedó listo o no contestó a tiempo | `TAREA_SIN_RESPUESTA` |
 
@@ -102,12 +111,16 @@ no puede ejecutar tareas.
 `cerberusdistribuido/tarea` ≡ `docker.io/cerberusdistribuido/tarea`. Si la variable está vacía no
 se permite **ninguna** imagen.
 
+Una entrada puede fijar el contenido: `repo@sha256:<digest>` (repetible). De ese repositorio sólo
+corren esos digests; otro es `403`. Orden: bien formada (`422`), en la lista (`403`), existente
+(`422 IMAGEN_INEXISTENTE`), digest (`403`).
+
 ## 4. Tipos de error
 
 `CUERPO_VACIO` · `JSON_INVALIDO` · `TIPO_DE_CONTENIDO` · `CUERPO_DEMASIADO_GRANDE` ·
 `PAYLOAD_INVALIDO` · `IMAGEN_NO_PERMITIDA` · `IMAGEN_INEXISTENTE` · `TAREA_RECHAZADA` ·
 `TAREA_FALLIDA` · `TAREA_SIN_RESPUESTA` · `REGISTRY_NO_DISPONIBLE` · `SERVICIO_NO_DISPONIBLE` ·
-`RUTA_INEXISTENTE` · `METODO_NO_PERMITIDO` · `ERROR_INTERNO`
+`RUTA_INEXISTENTE` · `METODO_NO_PERMITIDO` · `ERROR_INTERNO` · `NO_AUTORIZADO` · `ROL_INSUFICIENTE` · `DEMASIADOS_PEDIDOS`
 
 En `PAYLOAD_INVALIDO`, `contenido.error.detalles` lista cada problema:
 `[{"campo": "parametros", "problema": "no puede ser null"}]`.

@@ -1,4 +1,5 @@
 import threading
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -7,10 +8,11 @@ from docker.errors import APIError, DockerException, NotFound
 from app.config import Config
 from app.errores import ErrorApi, TipoError
 from app.imagenes import parsear
-from app.lanzador import Lanzador, SinConexion, Vencido, http_json
+from app.lanzador import Lanzador, SinConexion, Vencido, _digest_ejecutado, http_json
 from dobles import DockerFalso, HttpFalso, RelojFalso, logger_silencioso, sobre
 
 IMAGEN = parsear("cerberusdistribuido/tarea:1.0")
+DIGEST = "sha256:" + "b" * 64
 CONFIG = Config(timeout_arranque=5, timeout_ejecucion=10)
 
 
@@ -36,10 +38,12 @@ def _falla(lanzador, imagen=IMAGEN):
 def test_devuelve_el_resultado_y_borra_el_contenedor():
     http = HttpFalso()
     lanzador, docker_falso = _lanzador(http=http)
-    assert _ejecutar(lanzador) == 7
+    assert _ejecutar(lanzador).resultado == 7
     [contenedor] = docker_falso.creados
     assert contenedor.imagen == "docker.io/cerberusdistribuido/tarea:1.0"
     assert contenedor.network == "tp2-tareas"
+    assert contenedor.kwargs.get("mem_limit") == "256m"
+    assert contenedor.kwargs.get("nano_cpus") == 1_000_000_000
     assert contenedor.borrado
     assert docker_falso.pulls == []  # ya estaba en el host
     metodo, url, cuerpo, timeout = http.pedidos[-1]
@@ -65,6 +69,13 @@ def test_descarga_la_imagen_si_falta_con_credenciales_del_servidor():
                                    "auth": {"username": "cerberus", "password": "dckr_pat_x"}}]
 
 
+def test_sin_token_no_manda_credenciales():
+    docker_falso = DockerFalso()
+    lanzador, _ = _lanzador(docker_falso, config=Config(registry_usuario="cerberus", registry_token=""))
+    _ejecutar(lanzador)
+    assert docker_falso.pulls[0]["auth"] is None
+
+
 def test_no_manda_el_token_a_otro_registry():
     docker_falso = DockerFalso()
     lanzador, _ = _lanzador(docker_falso, config=Config(registry_usuario="cerberus",
@@ -82,6 +93,61 @@ def test_errores_de_descarga(error, tipo):
     lanzador, _ = _lanzador(docker_falso)
     assert _falla(lanzador).tipo is tipo
     assert docker_falso.creados == []
+
+
+# ---------------------------------------------------------------- metadata de la ejecución (R3)
+def test_devuelve_con_que_se_ejecuto():
+    lanzador, _ = _lanzador(DockerFalso(presentes={IMAGEN.referencia}, digests=[DIGEST]))
+    ejecucion = _ejecutar(lanzador)
+    assert (ejecucion.resultado, ejecucion.contenedor) == (7, "abc123")
+    assert ejecucion.imagen_id == "sha256:" + "a" * 64
+    assert ejecucion.digest == DIGEST
+    assert 0 <= ejecucion.ejecucion_s < 5
+
+
+def test_una_imagen_sin_repo_digest_no_tiene_digest_pero_si_id():
+    lanzador, _ = _lanzador()          # presente, sin RepoDigests: como una imagen construida en el host
+    ejecucion = _ejecutar(lanzador)
+    assert ejecucion.digest is None
+    assert ejecucion.imagen_id.startswith("sha256:")
+
+
+def test_el_digest_ejecutado_es_el_del_repositorio_pedido():
+    otra = "sha256:" + "c" * 64
+    local = SimpleNamespace(attrs={"RepoDigests": [f"otro/repo@{otra}", f"cerberusdistribuido/tarea@{DIGEST}"]})
+    assert _digest_ejecutado(IMAGEN, local) == DIGEST
+    assert _digest_ejecutado(IMAGEN, SimpleNamespace(attrs={"RepoDigests": [f"otro/repo@{otra}"]})) == otra
+    assert _digest_ejecutado(IMAGEN, SimpleNamespace(attrs={})) is None
+
+
+# ---------------------------------------------------------------- preparar_imagen (R2)
+def test_preparar_imagen_presente_devuelve_sus_digests_sin_descargar():
+    docker_falso = DockerFalso(presentes={IMAGEN.referencia}, digests=[DIGEST])
+    lanzador, _ = _lanzador(docker_falso)
+    assert lanzador.preparar_imagen(IMAGEN) == {DIGEST}
+    assert docker_falso.pulls == []
+
+
+def test_preparar_imagen_ausente_la_descarga():
+    docker_falso = DockerFalso(digests=[DIGEST])
+    lanzador, _ = _lanzador(docker_falso)
+    assert lanzador.preparar_imagen(IMAGEN) == {DIGEST}
+    assert len(docker_falso.pulls) == 1
+
+
+def test_preparar_imagen_inexistente_no_crea_contenedores():
+    docker_falso = DockerFalso(error_pull=NotFound("manifest unknown"))
+    lanzador, _ = _lanzador(docker_falso)
+    with pytest.raises(ErrorApi) as info:
+        lanzador.preparar_imagen(IMAGEN)
+    assert info.value.tipo is TipoError.IMAGEN_INEXISTENTE
+    assert docker_falso.creados == []
+
+
+def test_imagen_construida_en_el_host_no_tiene_digests():
+    docker_falso = DockerFalso(presentes={IMAGEN.referencia})
+    lanzador, _ = _lanzador(docker_falso)
+    assert lanzador.preparar_imagen(IMAGEN) == set()
 
 
 # ---------------------------------------------------------------- fallas de la tarea
@@ -108,6 +174,19 @@ def test_tarea_que_nunca_queda_lista_vence_y_se_borra():
     error = _falla(lanzador)
     assert error.tipo is TipoError.TAREA_SIN_RESPUESTA
     assert "5 s" in error.mensaje
+    assert docker_falso.creados[0].borrado
+
+
+def test_imagen_que_no_es_un_servicio_tarea_falla_sin_esperar_el_timeout():
+    """Si el contenedor termina, no se espera el timeout de arranque ni queda colgado."""
+    docker_falso = DockerFalso(presentes={IMAGEN.referencia}, termina=True)
+    http = HttpFalso(salud=SinConexion("refused"))
+    lanzador, _ = _lanzador(docker_falso, http=http)
+    error = _falla(lanzador)
+    assert error.tipo is TipoError.TAREA_FALLIDA
+    assert "no es un servicio tarea" in error.mensaje
+    assert "código de salida 3" in error.interno
+    assert http.pedidos == []
     assert docker_falso.creados[0].borrado
 
 
@@ -143,9 +222,12 @@ class _Handler(BaseHTTPRequestHandler):
         estado, cuerpo = {"/ok": (200, b'{"a": 1}'), "/roto": (200, b"no es json"),
                           "/rechazo": (422, b'{"b": 2}')}.get(self.path, (200, b"{}"))
         self.send_response(estado)
-        self.send_header("Content-Length", str(len(cuerpo)))
-        self.end_headers()
-        self.wfile.write(cuerpo)
+        try:
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.end_headers()
+            self.wfile.write(cuerpo)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def log_message(self, *args):
         pass

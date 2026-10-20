@@ -2,12 +2,14 @@
 
 Los corre `tests/integracion.sh`, que levanta todo desde cero. A mano:
     TP2_URL=http://127.0.0.1:8080 TP2_URL_NODO1=http://127.0.0.1:18081 python -m pytest -m integracion -v
-Suponen TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea-prueba y TP2_TIMEOUT_EJECUCION=4
-(es lo que configura el script). Van en orden: los de caídas dejan el cluster como estaba.
+Suponen la lista blanca y TP2_TIMEOUT_EJECUCION=4 que configura el script: tarea-prueba,
+no-es-tarea (una imagen que termina enseguida) y tarea-fijada con un digest que no es el suyo.
+Van en orden: los de caídas dejan el cluster como estaba.
 """
 
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -23,12 +25,17 @@ URL_NODO1 = os.environ.get("TP2_URL_NODO1", "http://127.0.0.1:18081").rstrip("/"
 PROYECTO = "tp2-hit3"
 IMAGEN = "cerberusdistribuido/tarea-prueba:test"
 ETIQUETA = "tp2.hit3.nodo"
+# Los emite integracion.sh con el secreto de los nodos (R4).
+TOKEN = os.environ.get("TP2_TOKEN", "")
+TOKEN_ADMIN = os.environ.get("TP2_TOKEN_ADMIN", "")
 
 
-def pedir(metodo, ruta, cuerpo=None, url=URL, timeout=30):
+def pedir(metodo, ruta, cuerpo=None, url=URL, timeout=30, token=TOKEN):
     datos = None if cuerpo is None else json.dumps(cuerpo).encode()
-    pedido = urllib.request.Request(url + ruta, data=datos, method=metodo,
-                                    headers={"Content-Type": "application/json"})
+    cabeceras = {"Content-Type": "application/json"}
+    if token:
+        cabeceras["Authorization"] = f"Bearer {token}"
+    pedido = urllib.request.Request(url + ruta, data=datos, method=metodo, headers=cabeceras)
     try:
         with urllib.request.urlopen(pedido, timeout=timeout) as r:
             return r.status, json.loads(r.read())
@@ -141,6 +148,38 @@ def test_imagen_fuera_de_la_lista():
     assert cuerpo["contenido"]["error"]["tipo"] == "IMAGEN_NO_PERMITIDA"
 
 
+def test_tag_inexistente_de_un_repo_permitido():
+    """Necesita Internet: el servidor intenta el pull y Docker Hub dice que no existe."""
+    codigo, cuerpo = tarea("suma", {"a": 1, "b": 1}, imagen="cerberusdistribuido/tarea-prueba:no-existe-9")
+    assert codigo == 422
+    assert cuerpo["contenido"]["error"]["tipo"] == "IMAGEN_INEXISTENTE"
+
+
+@pytest.mark.parametrize("imagen", ["Cerberus/Tarea:1.0", "cerberusdistribuido/tarea-prueba",
+                                    "cerberusdistribuido/tarea-prueba:latest", "tarea-prueba:1;rm -rf /"])
+def test_imagen_mal_formada(imagen):
+    codigo, cuerpo = tarea("suma", {"a": 1, "b": 1}, imagen=imagen)
+    assert codigo == 422
+    assert cuerpo["contenido"]["error"]["tipo"] == "PAYLOAD_INVALIDO"
+    assert cuerpo["contenido"]["error"]["detalles"][0]["campo"] == "imagen"
+
+
+def test_digest_distinto_del_fijado():
+    codigo, cuerpo = tarea("suma", {"a": 1, "b": 1}, imagen="cerberusdistribuido/tarea-fijada:test")
+    assert codigo == 403
+    assert "digest" in cuerpo["contenido"]["error"]["mensaje"]
+
+
+def test_imagen_que_no_es_un_servicio_tarea():
+    """El contenedor termina enseguida: error claro sin esperar los 30 s de arranque."""
+    inicio = time.monotonic()
+    codigo, cuerpo = tarea("suma", {"a": 1, "b": 1}, imagen="cerberusdistribuido/no-es-tarea:test")
+    assert codigo == 502
+    assert cuerpo["contenido"]["error"]["tipo"] == "TAREA_FALLIDA"
+    assert "no es un servicio tarea" in cuerpo["contenido"]["error"]["mensaje"]
+    assert time.monotonic() - inicio < 10
+
+
 @pytest.mark.parametrize("tamanio", [70 * 1024, 2 * 1024 * 1024])
 def test_cuerpo_demasiado_grande_es_413_en_el_sobre(tamanio):
     # 2 MiB supera el límite por defecto de nginx (1 MiB): sin el error_page propio, sale en HTML.
@@ -206,3 +245,46 @@ def test_no_quedan_contenedores_tarea():
     """Va último (pytest respeta el orden del archivo): después de todo lo anterior."""
     cliente = docker.from_env()
     esperar(lambda: not cliente.containers.list(all=True, filters={"label": ETIQUETA}), timeout=10)
+
+
+def test_sin_token_o_con_token_de_usuario_no_se_pasa():
+    codigo, cuerpo = pedir("POST", "/getRemoteTask", {"calculo": "suma", "parametros": {"a": 1, "b": 1}, "imagen": IMAGEN}, token="")
+    assert (codigo, cuerpo["contenido"]["error"]["tipo"]) == (401, "NO_AUTORIZADO")
+    codigo, cuerpo = pedir("GET", "/stats")
+    assert (codigo, cuerpo["contenido"]["error"]["tipo"]) == (403, "ROL_INSUFICIENTE")
+    codigo, _ = pedir("GET", "/stats", token="")
+    assert codigo == 401
+
+
+def test_stats_junta_los_tres_nodos_sin_importar_cual_atienda():
+    antes = pedir("GET", "/stats", token=TOKEN_ADMIN)[1]["contenido"]
+    for _ in range(6):                    # nginx las reparte entre los nodos
+        assert tarea("suma", {"a": 1, "b": 2})[0] == 200
+    tarea("division", {"a": 1, "b": 0})   # la tarea la rechaza: fallida
+    # Pedidos que caen en nodos distintos tienen que dar el mismo total.
+    totales = set()
+    for _ in range(6):
+        codigo, cuerpo = pedir("GET", "/stats", token=TOKEN_ADMIN)
+        stats = cuerpo["contenido"]
+        assert codigo == 200 and stats["nodos_sin_respuesta"] == []
+        assert sorted(stats["nodos"]) == ["1", "2", "3"]
+        totales.add((stats["tareas_ejecutadas"], stats["tareas_fallidas"]))
+    assert totales == {(antes["tareas_ejecutadas"] + 6, antes["tareas_fallidas"] + 1)}
+    assert sum(n["tareas_ejecutadas"] for n in stats["nodos"].values()) == stats["tareas_ejecutadas"]
+    assert stats["latencia_s"]["p95"] is not None
+
+
+def test_la_respuesta_trae_la_metadata_de_la_ejecucion():
+    codigo, cuerpo = tarea("suma", {"a": 3, "b": 4})
+    contenido = cuerpo["contenido"]
+    assert codigo == 200 and contenido["resultado"] == 7
+    assert re.fullmatch(r"[0-9a-f-]{36}", contenido["task_id"])
+    assert contenido["imagen"] == "docker.io/" + IMAGEN
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["imagen_id"])
+    # Una imagen construida en el host puede no tener digest de registry (depende del almacén de Docker).
+    assert contenido["digest"] is None or re.fullmatch(r"sha256:[0-9a-f]{64}", contenido["digest"])
+    assert re.fullmatch(r"[0-9a-f]{12}", contenido["contenedor"])
+    tiempos = contenido["tiempos"]
+    assert 0 <= tiempos["en_cola_s"] <= tiempos["total_s"] and 0 < tiempos["ejecucion_s"] <= tiempos["total_s"]
+    assert contenido["nodo"] in (1, 2, 3)
+

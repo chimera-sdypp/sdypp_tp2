@@ -26,12 +26,18 @@ bajar() {
 trap 'bajar fallo' ERR
 trap bajar EXIT
 
+# Secreto efímero para los JWT (R4) y un token de usuario y uno de admin para los tests.
+export TP2_JWT_SECRET="$("$PYTHON" -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export TP2_TOKEN="$("$PYTHON" "$HIT3/../evidencias/emitir_token.py" --usuario ana --rol usuario --horas 2)"
+export TP2_TOKEN_ADMIN="$("$PYTHON" "$HIT3/../evidencias/emitir_token.py" --usuario root --rol admin --horas 2)"
+
 cat > "$ENTORNO" <<FIN
 DOCKER_GID=$(stat -c %g /var/run/docker.sock)
-TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea-prueba,cerberusdistribuido/tarea
+TP2_IMAGENES_PERMITIDAS=cerberusdistribuido/tarea-prueba,cerberusdistribuido/tarea,cerberusdistribuido/no-es-tarea,cerberusdistribuido/tarea-fijada@sha256:$(printf '0%.0s' {1..64})
 TP2_PUERTO=$PUERTO
 TP2_PUERTO_NODO1=$PUERTO_NODO1
 TP2_TIMEOUT_EJECUCION=4
+TP2_JWT_SECRET=$TP2_JWT_SECRET
 TP2_REGISTRY_USUARIO=
 TP2_REGISTRY_TOKEN=
 FIN
@@ -39,6 +45,12 @@ FIN
 echo "==> imágenes de la tarea de prueba y de la tarea real"
 docker build -q -t cerberusdistribuido/tarea-prueba:test "$AQUI/tarea_prueba" >/dev/null
 docker build -q -t cerberusdistribuido/tarea:test "$HIT3/tarea" >/dev/null
+echo "==> imágenes para la validación (R2): una que no es servicio tarea y una con otro digest"
+docker build -q -t cerberusdistribuido/no-es-tarea:test - >/dev/null <<'FIN'
+FROM python:3.14-slim
+CMD ["python", "-c", "raise SystemExit(3)"]
+FIN
+docker tag cerberusdistribuido/tarea-prueba:test cerberusdistribuido/tarea-fijada:test
 echo "==> cluster (build + up, espera a healthy)"
 "${COMPOSE[@]}" up --build -d --wait
 echo "==> tests de integración"
@@ -47,4 +59,4 @@ TP2_URL="http://127.0.0.1:$PUERTO" TP2_URL_NODO1="http://127.0.0.1:$PUERTO_NODO1
     "$PYTHON" -m pytest -m integracion -v -s -p no:cacheprovider
 echo "==> cliente contra el servicio tarea real"
 "$PYTHON" "$HIT3/cliente/cliente.py" division '{"a": 7, "b": 2}' --imagen cerberusdistribuido/tarea:test \
-    --servidor "http://127.0.0.1:$PUERTO"
+    --servidor "http://127.0.0.1:$PUERTO" --token "$TP2_TOKEN"

@@ -4,40 +4,68 @@ Cada test afirma el **código** y el **sobre**, no sólo que "contestó".
 """
 
 import logging
+import time
+import uuid
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Config
 from app.errores import ErrorApi, TipoError
 from app.main import crear_app
+from dobles import ejecucion
 
+SECRETO = "secreto-de-prueba-de-al-menos-32-caracteres"
 VALIDO = {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "datos": {}, "imagen": "cerberusdistribuido/tarea:1.0"}
 
 
 class LanzadorFalso:
-    def __init__(self, resultado=7, error=None, disponible=True):
+    def __init__(self, resultado=7, error=None, disponible=True, digests=(), error_imagen=None):
         self.resultado = resultado
         self.error = error
         self._disponible = disponible
+        self.digests = set(digests)
+        self.error_imagen = error_imagen
         self.llamadas = []
+
+    def preparar_imagen(self, imagen):
+        if self.error_imagen:
+            raise self.error_imagen
+        return self.digests
 
     def ejecutarTareaRemota(self, imagen, calculo, parametros, datos):  # noqa: N802
         self.llamadas.append((imagen.referencia, calculo, parametros, datos))
         if self.error:
             raise self.error
-        return self.resultado
+        return ejecucion(self.resultado)
 
     def disponible(self):
         return self._disponible
 
 
+def token(usuario="ana", rol="usuario", vence_en=300, secreto=SECRETO, **claims):
+    """Un JWT firmado como lo haría quien emite los tokens."""
+    ahora = int(time.time())
+    return jwt.encode({"sub": usuario, "role": rol, "iat": ahora, "exp": ahora + vence_en, **claims},
+                      secreto, algorithm="HS256")
+
+
+def con(tok):
+    return {"Authorization": f"Bearer {tok}"}
+
+
 @pytest.fixture
 def armar(tmp_path):
-    def _armar(lanzador=None, **cambios):
-        opciones = {"dir_logs": str(tmp_path), "imagenes_permitidas": ("cerberusdistribuido/tarea",), **cambios}
+    """El cliente de prueba entra como usuario `ana` salvo que se pida `sin_token=True` o se
+    mande otra cabecera `Authorization`. El límite por usuario está apagado salvo que se pida."""
+    def _armar(lanzador=None, sin_token=False, **cambios):
+        opciones = {"dir_logs": str(tmp_path), "imagenes_permitidas": ("cerberusdistribuido/tarea",),
+                    "jwt_secreto": SECRETO, "limite_pedidos_min": 0, **cambios}
         lanzador = lanzador or LanzadorFalso()
-        return TestClient(crear_app(Config(**opciones), lanzador), raise_server_exceptions=False), lanzador
+        cliente = TestClient(crear_app(Config(**opciones), lanzador), raise_server_exceptions=False,
+                             headers=None if sin_token else con(token()))
+        return cliente, lanzador
     return _armar
 
 
@@ -68,7 +96,8 @@ def _post(cliente, cuerpo=None, **kwargs):
 # ---------------------------------------------------------------- caso feliz
 def test_ejecuta_la_tarea_y_devuelve_el_resultado(armar):
     cliente, lanzador = armar()
-    assert _sobre(_post(cliente, VALIDO), 200) == {"calculo": "suma", "resultado": 7}
+    contenido = _sobre(_post(cliente, VALIDO), 200)
+    assert (contenido["calculo"], contenido["resultado"]) == ("suma", 7)
     # La imagen llega normalizada y el trabajo, tal cual.
     assert lanzador.llamadas == [("docker.io/cerberusdistribuido/tarea:1.0", "suma", {"a": 3, "b": 4}, {})]
 
@@ -77,6 +106,29 @@ def test_datos_es_opcional(armar):
     cliente, lanzador = armar()
     _sobre(_post(cliente, {k: v for k, v in VALIDO.items() if k != "datos"}), 200)
     assert lanzador.llamadas[0][3] == {}
+
+
+def test_la_respuesta_trae_la_metadata_de_la_ejecucion(armar):
+    cliente, _ = armar()
+    contenido = _sobre(_post(cliente, VALIDO), 200)
+    assert contenido.keys() == {"calculo", "resultado", "task_id", "imagen", "digest", "imagen_id", "contenedor",
+                                "tiempos"}
+    assert uuid.UUID(contenido["task_id"]).version == 4
+    assert contenido["imagen"] == "docker.io/cerberusdistribuido/tarea:1.0"
+    assert contenido["digest"] == "sha256:" + "b" * 64
+    assert contenido["imagen_id"] == "sha256:" + "a" * 64
+    assert contenido["contenedor"] == "c0ffee123456"
+    tiempos = contenido["tiempos"]
+    assert tiempos.keys() == {"en_cola_s", "ejecucion_s", "total_s"}
+    assert tiempos["ejecucion_s"] == 0.01
+    assert tiempos["en_cola_s"] == 0.0     # el Hit 1 no tiene cola
+    assert 0 <= tiempos["en_cola_s"] <= tiempos["total_s"]    # la ejecución es la del doble: no se compara
+
+
+def test_cada_tarea_tiene_su_task_id(armar):
+    cliente, _ = armar()
+    ids = {_sobre(_post(cliente, VALIDO), 200)["task_id"] for _ in range(3)}
+    assert len(ids) == 3
 
 
 # ---------------------------------------------------------------- errores del cliente
@@ -126,6 +178,35 @@ def test_imagen_fuera_de_la_lista_blanca_es_403(armar):
 def test_sin_lista_blanca_se_rechaza_todo(armar):
     cliente, _ = armar(imagenes_permitidas=())
     _sobre(_post(cliente, VALIDO), 403, "IMAGEN_NO_PERMITIDA")
+
+
+def test_imagen_inexistente_es_422_y_no_se_ejecuta(armar):
+    error = ErrorApi(TipoError.IMAGEN_INEXISTENTE, "la imagen no existe o no es accesible",
+                     interno="manifest unknown")
+    cliente, lanzador = armar(LanzadorFalso(error_imagen=error))
+    respuesta = _post(cliente, {**VALIDO, "imagen": "cerberusdistribuido/tarea:9.9.9"})
+    _sobre(respuesta, 422, "IMAGEN_INEXISTENTE")
+    assert "manifest unknown" not in respuesta.text
+    assert lanzador.llamadas == []
+
+
+DIGEST = "sha256:" + "a" * 64
+
+
+def test_imagen_con_el_digest_fijado_se_ejecuta(armar):
+    cliente, lanzador = armar(LanzadorFalso(digests={DIGEST}),
+                              imagenes_permitidas=(f"cerberusdistribuido/tarea@{DIGEST}",))
+    _sobre(_post(cliente, VALIDO), 200)
+    assert len(lanzador.llamadas) == 1
+
+
+@pytest.mark.parametrize("digests", [{"sha256:" + "f" * 64}, set()])
+def test_imagen_con_otro_digest_que_el_fijado_es_403(armar, digests):
+    cliente, lanzador = armar(LanzadorFalso(digests=digests),
+                              imagenes_permitidas=(f"cerberusdistribuido/tarea@{DIGEST}",))
+    contenido = _sobre(_post(cliente, VALIDO), 403, "IMAGEN_NO_PERMITIDA")
+    assert "digest" in contenido["error"]["mensaje"]
+    assert lanzador.llamadas == []
 
 
 # ---------------------------------------------------------------- errores de la tarea
@@ -190,3 +271,143 @@ def test_logs_en_disco_y_en_memoria(armar, tmp_path):
     memoria = next(h for h in logging.getLogger("tp2.servidor").handlers if hasattr(h, "registros"))
     assert any("POST /getRemoteTask | 200" in linea for linea in memoria.registros)
     assert "POST /getRemoteTask | 200" in (tmp_path / "servidor.log").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- autenticación por request (R4)
+def test_sin_token_es_401_y_no_ejecuta_nada(armar):
+    cliente, lanzador = armar(sin_token=True)
+    respuesta = _post(cliente, VALIDO)
+    _sobre(respuesta, 401, "NO_AUTORIZADO")
+    assert respuesta.headers["www-authenticate"] == "Bearer"
+    assert lanzador.llamadas == []
+
+
+@pytest.mark.parametrize("cabecera", [
+    "Bearer basura",
+    "Basic YW5hOnNlY3JldG8=",
+    "Bearer",
+    "",
+])
+def test_token_mal_formado_es_401(armar, cabecera):
+    cliente, lanzador = armar(sin_token=True)
+    _sobre(_post(cliente, VALIDO, headers={"Authorization": cabecera}), 401, "NO_AUTORIZADO")
+    assert lanzador.llamadas == []
+
+
+def test_token_firmado_con_otro_secreto_es_401(armar):
+    cliente, lanzador = armar(sin_token=True)
+    falso = token(secreto="otro-secreto-que-tambien-tiene-mas-de-32-caracteres")
+    _sobre(_post(cliente, VALIDO, headers=con(falso)), 401, "NO_AUTORIZADO")
+    assert lanzador.llamadas == []
+
+
+def test_token_vencido_es_401_y_lo_dice(armar):
+    cliente, lanzador = armar(sin_token=True)
+    contenido = _sobre(_post(cliente, VALIDO, headers=con(token(vence_en=-5))), 401, "NO_AUTORIZADO")
+    assert "venció" in contenido["error"]["mensaje"]
+    assert lanzador.llamadas == []
+
+
+def test_token_sin_vencimiento_es_401(armar):
+    cliente, _ = armar(sin_token=True)
+    sin_exp = jwt.encode({"sub": "ana", "role": "usuario"}, SECRETO, algorithm="HS256")
+    _sobre(_post(cliente, VALIDO, headers=con(sin_exp)), 401, "NO_AUTORIZADO")
+
+
+def test_token_sin_firma_alg_none_es_401(armar):
+    cliente, lanzador = armar(sin_token=True)
+    sin_firma = jwt.encode({"sub": "ana", "role": "admin", "exp": int(time.time()) + 300}, None, algorithm="none")
+    _sobre(_post(cliente, VALIDO, headers=con(sin_firma)), 401, "NO_AUTORIZADO")
+    assert lanzador.llamadas == []
+
+
+def test_token_con_rol_desconocido_es_403(armar):
+    cliente, lanzador = armar(sin_token=True)
+    _sobre(_post(cliente, VALIDO, headers=con(token(rol="root"))), 403, "ROL_INSUFICIENTE")
+    assert lanzador.llamadas == []
+
+
+def test_el_usuario_y_el_admin_ejecutan_tareas(armar):
+    cliente, lanzador = armar(sin_token=True)
+    _sobre(_post(cliente, VALIDO, headers=con(token("ana", "usuario"))), 200)
+    _sobre(_post(cliente, VALIDO, headers=con(token("root", "admin"))), 200)
+    assert len(lanzador.llamadas) == 2
+
+
+def test_health_es_publico(armar):
+    cliente, _ = armar(sin_token=True)
+    _sobre(cliente.get("/health"), 200)
+
+
+def test_stats_sin_token_es_401(armar):
+    cliente, _ = armar(sin_token=True)
+    _sobre(cliente.get("/stats"), 401, "NO_AUTORIZADO")
+
+
+def test_stats_con_token_de_usuario_es_403(armar):
+    cliente, _ = armar()
+    contenido = _sobre(cliente.get("/stats"), 403, "ROL_INSUFICIENTE")
+    assert "admin" in contenido["error"]["mensaje"]
+
+
+def test_stats_con_token_de_admin_es_200(armar):
+    cliente, _ = armar(sin_token=True)
+    contenido = _sobre(cliente.get("/stats", headers=con(token("root", "admin"))), 200)
+    assert contenido.keys() >= {"tareas_ejecutadas", "tareas_fallidas", "tareas_por_imagen", "latencia_s",
+                                "tareas_en_cola", "workers_ocupados", "workers_max", "pedidos_por_codigo"}
+    assert contenido["tareas_ejecutadas"] == 0
+    assert contenido["latencia_s"] == {"promedio": None, "p95": None, "muestras": 0}
+
+
+def test_stats_cuenta_tareas_por_imagen_y_pedidos_por_codigo(armar):
+    lanzador = LanzadorFalso()
+    cliente, _ = armar(lanzador)
+    for _ in range(3):
+        _sobre(_post(cliente, VALIDO), 200)
+    lanzador.error = ErrorApi(TipoError.TAREA_FALLIDA, "falló")
+    _sobre(_post(cliente, VALIDO), 502, "TAREA_FALLIDA")
+    _sobre(_post(cliente, {**VALIDO, "imagen": "otra/cosa:1"}), 403, "IMAGEN_NO_PERMITIDA")
+    _sobre(_post(cliente, VALIDO, headers={"Authorization": "Bearer x"}), 401, "NO_AUTORIZADO")
+
+    stats = _sobre(cliente.get("/stats", headers=con(token("root", "admin"))), 200)
+    assert stats["tareas_ejecutadas"] == 3
+    assert stats["tareas_fallidas"] == 1
+    assert stats["tareas_por_imagen"] == {"docker.io/cerberusdistribuido/tarea:1.0": {"ejecutadas": 3, "fallidas": 1}}
+    assert stats["pedidos_por_codigo"] == {"200": 3, "401": 1, "403": 1, "502": 1}
+    assert stats["latencia_s"]["muestras"] == 4
+    assert stats["latencia_s"]["p95"] >= stats["latencia_s"]["promedio"] >= 0
+    assert (stats["tareas_en_cola"], stats["workers_ocupados"], stats["workers_max"]) == (0, 0, None)
+
+
+def test_el_servidor_no_arranca_sin_secreto_o_con_uno_corto(tmp_path):
+    for secreto in ("", "corto"):
+        with pytest.raises(ValueError, match="TP2_JWT_SECRET"):
+            crear_app(Config(dir_logs=str(tmp_path), jwt_secreto=secreto), LanzadorFalso())
+
+
+# ---------------------------------------------------------------- límite por usuario (R4)
+def test_pasado_el_limite_el_usuario_recibe_429_con_retry_after(armar):
+    cliente, lanzador = armar(limite_pedidos_min=2)
+    _sobre(_post(cliente, VALIDO), 200)
+    _sobre(_post(cliente, VALIDO), 200)
+    respuesta = _post(cliente, VALIDO)
+    contenido = _sobre(respuesta, 429, "DEMASIADOS_PEDIDOS")
+    assert int(respuesta.headers["retry-after"]) >= 1
+    assert "ana" in contenido["error"]["mensaje"]
+    assert len(lanzador.llamadas) == 2
+
+
+def test_el_limite_es_por_usuario_y_los_rechazos_sin_token_no_lo_gastan(armar):
+    cliente, _ = armar(sin_token=True, limite_pedidos_min=1)
+    for _ in range(5):
+        _sobre(_post(cliente, VALIDO), 401, "NO_AUTORIZADO")
+    _sobre(_post(cliente, VALIDO, headers=con(token("ana"))), 200)
+    _sobre(_post(cliente, VALIDO, headers=con(token("ana"))), 429, "DEMASIADOS_PEDIDOS")
+    _sobre(_post(cliente, VALIDO, headers=con(token("beto"))), 200)
+
+
+def test_el_limite_en_cero_lo_apaga(armar):
+    cliente, lanzador = armar(limite_pedidos_min=0)
+    for _ in range(20):
+        _sobre(_post(cliente, VALIDO), 200)
+    assert len(lanzador.llamadas) == 20

@@ -31,13 +31,20 @@ validación, el contrato con el servicio tarea y, en el Hit 3, los mensajes entr
 | `despliegue/` | El script que instala el hit en la VM |
 | `mediciones/` | (Hits 2 y 3) Los datos y gráficos del informe |
 
+Los scripts de evidencia de R1, R2 y R5 están en [`evidencias/`](evidencias/) (p. ej. `evidencias/r2_imagenes.sh hit2` y `evidencias/r5_matriz_parametros.sh hit2`).
+
+Además, [`evidencias/`](evidencias/) tiene los scripts que reproducen cada requisito de la práctica:
+`r1_pull_privado.sh` (imagen privada), `r2_imagenes.sh` (validación de la imagen), `r3_contrato.sh` (cada
+código de la tabla de errores del contrato), `r4_autenticacion.sh` (401, 403, 200 y 429), `r5_matriz_parametros.sh`
+(la matriz V1 × V2 × V3) y `emitir_token.py`, que emite los JWT de usuario y de admin.
+
 ## Correrlo en local
 
 Hace falta Docker con Compose v2 y Python 3 para el cliente. Para cualquier hit:
 
 ```bash
 cd hit1                       # o hit2, hit3
-cp .env.example .env          # y completarlo, ver el README del hit
+cp .env.example .env          # y completarlo, ver el README del hit (incluido TP2_JWT_SECRET: sin él no arranca)
 docker compose up --build -d
 ```
 
@@ -46,7 +53,7 @@ docker compose up --build -d
 Cada push corre en GitHub Actions `gitleaks` (falla si hay un secreto en el código) y los tests
 unitarios y de integración de los tres hits. En `main`, además, publica la imagen de cada servidor en
 GHCR. La VM baja la imagen nueva en hasta 5 minutos, sin credenciales en GitHub, y un último
-job prueba el servidor desplegado desde Internet.
+job prueba el servidor desplegado desde Internet (sin secretos: comprueba que está arriba y que no atiende a nadie sin token).
 
 ## Informe del Trabajo Práctico
 
@@ -54,5 +61,5 @@ El informe del trabajo práctico puede verse desde [aquí](/informe-tp2-cerberus
 
 ## Contrato público y Swagger
 
-- [`contrato-publico.md`](contrato-publico.md): la API de los tres hits, con ejemplos.
+- [`contrato-publico.md`](contrato-publico.md): la API de los tres hits: request, respuesta OK con su metadata, tabla de errores, autenticación y "lo que falta".
 - [`openapi.yaml`](openapi.yaml): el mismo contrato en OpenAPI 3.1, para abrir en Swagger.

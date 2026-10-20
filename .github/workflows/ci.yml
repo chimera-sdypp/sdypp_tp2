@@ -23,6 +23,27 @@ jobs:
             | tar -xz gitleaks
           ./gitleaks git --redact -v .
 
+  tarea-video:
+    name: Servicio tarea-video — tests con ffmpeg
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tarea-video
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"   # el de Debian trixie, la base de la imagen
+      - name: Instalar ffmpeg y pytest
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends ffmpeg
+          pip install pytest
+      # Los videos de prueba se generan en el momento con ffmpeg (testsrc).
+      - name: Tests
+        run: python -m pytest -v
+      - name: Construir la imagen
+        run: docker build -t cerberusdistribuido/tarea-video:ci .
+
   hit1-unitarios:
     name: Hit 1 — tests unitarios y de API
     runs-on: ubuntu-latest
@@ -90,20 +111,21 @@ jobs:
       TP2_SERVIDOR: ${{ vars.TP2_HIT1_URL || 'http://18.231.127.74:8081' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Mandar tareas al servidor público con el cliente
+      # Sin secretos: GitHub no tiene el JWT de la VM. Se prueba que está arriba y que no atiende
+      # a nadie sin token (R4); /stats sólo existe en la versión nueva, así que espera a que la VM la traiga.
+      - name: Probar el servidor público sin token
         run: |
-          cliente() { python3 hit1/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
-          # Si el servidor no contesta (p. ej. mientras la VM recrea el contenedor), se
-          # reintenta hasta 3 minutos. No comprueba qué versión contesta.
-          for intento in $(seq 12); do
-            cliente suma '{"a": 3, "b": 4}' > suma.json && break
+          codigo() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          for intento in $(seq 20); do
+            [ "$(codigo "$TP2_SERVIDOR/stats")" = 401 ] && break
             sleep 15
           done
-          cat suma.json
-          grep -q '"resultado": 7' suma.json
-          cliente division '{"a": 1, "b": 0}' > division.json || true
-          cat division.json
-          grep -q '"codigo": 422' division.json
+          echo "health: $(codigo "$TP2_SERVIDOR/health")"
+          echo "stats sin token: $(codigo "$TP2_SERVIDOR/stats")"
+          echo "tarea sin token: $(codigo -X POST -H 'Content-Type: application/json' -d '{}' "$TP2_SERVIDOR/getRemoteTask")"
+          [ "$(codigo "$TP2_SERVIDOR/health")" = 200 ]
+          [ "$(codigo "$TP2_SERVIDOR/stats")" = 401 ]
+          [ "$(codigo -X POST -H 'Content-Type: application/json' -d '{}' "$TP2_SERVIDOR/getRemoteTask")" = 401 ]
 
   hit2-unitarios:
     name: Hit 2 — tests unitarios y de API
@@ -170,19 +192,21 @@ jobs:
       TP2_SERVIDOR: ${{ vars.TP2_HIT2_URL || 'http://18.231.127.74:8082' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Mandar tareas al servidor público con el cliente
+      # Sin secretos: GitHub no tiene el JWT de la VM. Se prueba que está arriba y que no atiende
+      # a nadie sin token (R4); /stats sólo existe en la versión nueva, así que espera a que la VM la traiga.
+      - name: Probar el servidor público sin token
         run: |
-          cliente() { python3 hit2/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
-          for intento in $(seq 12); do
-            cliente suma '{"a": 3, "b": 4}' > suma.json && break
+          codigo() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          for intento in $(seq 20); do
+            [ "$(codigo "$TP2_SERVIDOR/stats")" = 401 ] && break
             sleep 15
           done
-          cat suma.json
-          grep -q '"resultado": 7' suma.json
-          grep -q '"lamport_ts"' suma.json
-          cliente division '{"a": 1, "b": 0}' > division.json || true
-          cat division.json
-          grep -q '"codigo": 422' division.json
+          echo "health: $(codigo "$TP2_SERVIDOR/health")"
+          echo "stats sin token: $(codigo "$TP2_SERVIDOR/stats")"
+          echo "tarea sin token: $(codigo -X POST -H 'Content-Type: application/json' -d '{}' "$TP2_SERVIDOR/getRemoteTask")"
+          [ "$(codigo "$TP2_SERVIDOR/health")" = 200 ]
+          [ "$(codigo "$TP2_SERVIDOR/stats")" = 401 ]
+          [ "$(codigo -X POST -H 'Content-Type: application/json' -d '{}' "$TP2_SERVIDOR/getRemoteTask")" = 401 ]
 
   hit3-unitarios:
     name: Hit 3 — tests unitarios y de API
@@ -250,21 +274,21 @@ jobs:
       TP2_SERVIDOR: ${{ vars.TP2_HIT3_URL || 'http://18.231.127.74:8083' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Mandar tareas al cluster público con el cliente
+      # Sin secretos: GitHub no tiene el JWT de la VM. Se prueba que está arriba y que no atiende
+      # a nadie sin token (R4); /stats sólo existe en la versión nueva, así que espera a que la VM la traiga.
+      - name: Probar el cluster público sin token
         run: |
-          cliente() { python3 hit3/cliente/cliente.py "$@" --imagen cerberusdistribuido/tarea:1.0.0; }
-          # Si el servidor no contesta (p. ej. mientras la VM recrea el contenedor), se
-          # reintenta hasta 3 minutos. No comprueba qué versión contesta.
-          for intento in $(seq 12); do
-            cliente suma '{"a": 3, "b": 4}' > suma.json && break
+          codigo() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          for intento in $(seq 20); do
+            [ "$(codigo "$TP2_SERVIDOR/stats")" = 401 ] && break
             sleep 15
           done
-          cat suma.json
-          grep -q '"resultado": 7' suma.json
-          grep -q '"nodo"' suma.json
-          cliente division '{"a": 1, "b": 0}' > division.json || true
-          cat division.json
-          grep -q '"codigo": 422' division.json
+          echo "health: $(codigo "$TP2_SERVIDOR/health")"
+          echo "stats sin token: $(codigo "$TP2_SERVIDOR/stats")"
+          echo "tarea sin token: $(codigo -X POST -H 'Content-Type: application/json' -d '{}' "$TP2_SERVIDOR/getRemoteTask")"
+          [ "$(codigo "$TP2_SERVIDOR/health")" = 200 ]
+          [ "$(codigo "$TP2_SERVIDOR/stats")" = 401 ]
+          [ "$(codigo -X POST -H 'Content-Type: application/json' -d '{}' "$TP2_SERVIDOR/getRemoteTask")" = 401 ]
       - name: Hay coordinador y los 3 nodos están vivos
         run: |
           for intento in $(seq 6); do  # round-robin: alguna vez contesta el coordinador

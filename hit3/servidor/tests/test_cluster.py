@@ -70,3 +70,36 @@ def test_conocer_no_pisa_lo_que_trajo_un_heartbeat():
     registro.conocer(2)
     registro.conocer(3)
     assert {n: e["tareas_en_curso"] for n, e in registro.estado().items()} == {"2": 5, "3": 0}
+
+
+def test_asumir_coordinador_atomico_limpia_epoca_anterior_y_anota_al_lider():
+    registro, reloj = _registro()
+    registro.actualizar(2, 3)
+    registro.actualizar(3, 1)
+    reloj.dormir(1.0)
+    # Asume como nuevo coordinador con 0 tareas en curso
+    registro.asumir_coordinador(1, 0)
+    estado = registro.estado()
+    assert list(estado.keys()) == ["1"]
+    assert estado["1"]["tareas_en_curso"] == 0
+    assert estado["1"]["estado"] == "vivo"
+
+
+def test_asumir_coordinador_concurrente_con_heartbeats():
+    import threading
+    registro, _ = _registro()
+
+    def mandar_heartbeats():
+        for i in range(50):
+            registro.actualizar(2, i % 5)
+            registro.actualizar(3, i % 3)
+
+    t = threading.Thread(target=mandar_heartbeats)
+    t.start()
+    registro.asumir_coordinador(1, 0)
+    t.join()
+
+    # El coordinador propio debe seguir registrado y vivo, más los heartbeats recibidos
+    estado = registro.estado()
+    assert "1" in estado and estado["1"]["estado"] == "vivo"
+    assert estado["1"]["tareas_en_curso"] == 0

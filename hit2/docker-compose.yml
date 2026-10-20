@@ -10,18 +10,36 @@ services:
       TP2_IMAGENES_PERMITIDAS: ${TP2_IMAGENES_PERMITIDAS:?definir TP2_IMAGENES_PERMITIDAS en .env}
       TP2_WORKERS_MAX: ${TP2_WORKERS_MAX:-4}
       TP2_TIMEOUT_EJECUCION: ${TP2_TIMEOUT_EJECUCION:-60}
+      TP2_TAREA_MEM_LIMIT: ${TP2_TAREA_MEM_LIMIT:-256m}
+      TP2_TAREA_CPUS: ${TP2_TAREA_CPUS:-1.0}
       TP2_REGISTRY_USUARIO: ${TP2_REGISTRY_USUARIO:-}
+      TP2_LIMITE_PEDIDOS_MIN: ${TP2_LIMITE_PEDIDOS_MIN:-300}
 
-      # El token llega como archivo (secret) y no como variable: no aparece en `docker inspect`.
+      # Transcodificación asíncrona de video (Hits 2 y 3)
+      TP2_VIDEO_IMAGEN: ${TP2_VIDEO_IMAGEN:-cerberusdistribuido/tarea-video:1.0.0}
+      TP2_VIDEO_DIR: /trabajos
+      TP2_VIDEO_WORKERS_MAX: ${TP2_VIDEO_WORKERS_MAX:-2}
+      TP2_VIDEO_COLA_MAX: ${TP2_VIDEO_COLA_MAX:-20}
+      TP2_VIDEO_TRABAJOS_POR_USUARIO_MAX: ${TP2_VIDEO_TRABAJOS_POR_USUARIO_MAX:-3}
+      TP2_VIDEO_TIMEOUT: ${TP2_VIDEO_TIMEOUT:-3600}
+      TP2_VIDEO_MEM_LIMIT: ${TP2_VIDEO_MEM_LIMIT:-2g}
+      TP2_VIDEO_CPUS: ${TP2_VIDEO_CPUS:-2.0}
+      TP2_VIDEO_RETENCION_HORAS: ${TP2_VIDEO_RETENCION_HORAS:-24}
+
+      # Los secretos llegan como archivo y no como variable: no aparecen en `docker inspect`.
       TP2_REGISTRY_TOKEN_ARCHIVO: /run/secrets/registry_token
+      TP2_JWT_SECRET_ARCHIVO: /run/secrets/jwt_secret
     secrets:
       - registry_token
+      - jwt_secret
     ports:
       - "${TP2_PUERTO:-8080}:8080"
     volumes:
       # Para crear los contenedores tarea le habla al daemon del host por su socket.
       - /var/run/docker.sock:/var/run/docker.sock
       - logs:/app/logs
+      # Volumen compartido para transcodificación de video (Contrato § Anexo)
+      - tp2-videos:/trabajos
     group_add:
       - "${DOCKER_GID:?definir DOCKER_GID en .env: stat -c %g /var/run/docker.sock}"
     networks:
@@ -36,8 +54,14 @@ networks:
 
 volumes:
   logs: {}
+  tp2-videos:
+    name: tp2-videos
 
 secrets:
+  # Con qué se firman los JWT de los clientes. Sin él (o de menos de 32 caracteres) el servidor
+  # no arranca: nunca queda abierto.
+  jwt_secret:
+    environment: TP2_JWT_SECRET
   # Vacía en .env ⇒ compose no crea el archivo y el servidor hace pulls anónimos.
   registry_token:
     environment: TP2_REGISTRY_TOKEN
