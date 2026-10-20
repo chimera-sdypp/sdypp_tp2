@@ -55,6 +55,12 @@ class LimitadorPorUsuario:
         reposicion = self.por_minuto / 60.0
 
         with self._candado:
+            # Poda periódica para evitar fugas de memoria con identidades aleatorias de bots (R5)
+            if len(self._baldes) > 1000:
+                inactivos = [u for u, (_, t) in self._baldes.items() if ahora - t > 3600]
+                for u in inactivos:
+                    del self._baldes[u]
+
             # Si el usuario es nuevo, arranca con el balde lleno a su capacidad máxima
             fichas, antes = self._baldes.get(usuario, (float(self.por_minuto), ahora))
 

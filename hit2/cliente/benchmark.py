@@ -28,41 +28,86 @@ WORKERS = [1, 2, 4, 8]
 
 
 def levantar_servidor(workers):
-    """Recrea el servidor con TP2_WORKERS_MAX=workers y espera a que esté healthy."""
+    """Recrea y levanta el servidor fijando la variable TP2_WORKERS_MAX=workers.
+    
+    Utiliza Docker Compose para reiniciar el contenedor del servidor de forma controlada
+    y espera mediante el flag `--wait` a que el endpoint `/health` reporte estado saludable.
+    """
     entorno = {**os.environ, "TP2_WORKERS_MAX": str(workers)}
     subprocess.run(["docker", "compose", "-f", str(HIT2 / "docker-compose.yml"), "up", "-d", "--wait"],
                    env=entorno, check=True, capture_output=True)
 
 
 def medir(servidor, imagen, tareas, token=""):
-    """Manda `tareas` sumas a la vez. Devuelve (segundos totales, exitosas, latencia media)."""
+    """Envía un lote de tareas concurrentes de forma simultánea para saturar la cola.
+    
+    Al despachar todas las tareas en paralelo mediante un ThreadPoolExecutor de tamaño `tareas`,
+    se garantiza que la cola del servidor nunca se vacíe durante la prueba, permitiendo
+    medir la capacidad máxima de procesamiento (throughput en estado saturado).
+    
+    Retorna:
+    - Tupla: (segundos_totales, cantidad_tareas_exitosas, latencia_media_por_tarea)
+    """
     def una(i):
         inicio = time.perf_counter()
+        # Cada hilo utiliza una instancia propia del cliente con reloj de Lamport independiente
         respuesta = ClienteHit2(servidor, token=token).enviar_tarea("suma", {"a": i, "b": 1}, imagen=imagen, timeout=600)
         return respuesta["codigo"] == 200, time.perf_counter() - inicio
 
     inicio = time.perf_counter()
+    # Ejecutamos las tareas en paralelo
     with ThreadPoolExecutor(max_workers=tareas) as hilos:
         resultados = list(hilos.map(una, range(tareas)))
+    # Retornamos duración de la ráfaga, conteo de respuestas 200 y media aritmética de latencias
     return time.perf_counter() - inicio, sum(ok for ok, _ in resultados), statistics.mean(t for _, t in resultados)
 
 
 def amdahl(n, p):
+    """Calcula el speedup teórico predicho por la Ley de Amdahl (Gene Amdahl, 1967).
+    
+    Fórmula:
+        S(N) = 1 / ((1 - P) + P / N)
+    
+    Donde:
+    - N: Número de procesadores o workers concurrentes.
+    - P: Fracción paralelizable del trabajo (0 <= P <= 1).
+    - (1 - P): Fracción estrictamente serial (cuello de botella secuencial: red, encolado, parsing).
+    
+    A medida que N tiende a infinito, el speedup máximo asintótico queda limitado a 1 / (1 - P).
+    """
     return 1 / ((1 - p) + p / n)
 
 
 def ajustar_fraccion_paralela(filas):
-    """La P de Amdahl que mejor explica los speedups medidos (mínimos cuadrados, paso 0,001)."""
+    """Encuentra la fracción paralelizable P que mejor se ajusta a los speedups medidos.
+    
+    Utiliza el método de Mínimos Cuadrados (Least Squares):
+    Minimiza la suma de los residuos al cuadrado:
+        Error(P) = sum_i ( Speedup_medido_i - Speedup_Amdahl(N_i, P) )^2
+    
+    Explora el espacio de búsqueda discreto de P en el rango [0.0, 1.0] con paso de 0.001.
+    """
     return min((i / 1000 for i in range(1001)),
                key=lambda p: sum((f["speedup"] - amdahl(f["workers"], p)) ** 2 for f in filas))
 
 
 def graficar(filas, p, destino):
+    """Genera el gráfico comparativo de escalabilidad y lo guarda en disco como imagen PNG.
+    
+    Compara:
+    1. Curva Ideal Lineal (Speedup = N): Representa escalabilidad perfecta sin overheads.
+    2. Curva Teórica de Amdahl: Ajustada con la fracción paralelizable P calculada.
+    3. Puntos Experimentales Reales: Medidos con 1, 2, 4 y 8 workers.
+    """
     workers = [f["workers"] for f in filas]
     plt.figure(figsize=(8, 5), dpi=120)
+    # Línea de referencia ideal: pendiente unitaria
     plt.plot(workers, workers, "k--", label="Ideal (S = N)")
+    # Curva teórica ajustada por la Ley de Amdahl
     plt.plot(workers, [amdahl(n, p) for n in workers], "r-.", label=f"Amdahl ajustada (P = {p:.0%})")
+    # Puntos experimentales observados en el banco de pruebas
     plt.plot(workers, [f["speedup"] for f in filas], "bo-", label="Medido")
+    # Agregamos anotaciones numéricas sobre cada punto medido
     for f in filas:
         plt.annotate(f"{f['speedup']}x · {f['throughput_tpm']:.0f} tpm", (f["workers"], f["speedup"]),
                      textcoords="offset points", xytext=(0, 9), ha="center")

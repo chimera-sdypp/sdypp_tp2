@@ -29,12 +29,14 @@ class TareaEncolada:
     Implementa el operador `<` (__lt__) para ser ordenada automáticamente en la Min-Heap.
     """
 
-    def __init__(self, id_tarea: str, lamport_ts: int, orden_llegada: int, ejecutor_fn, futuro: Future):
+    def __init__(self, id_tarea: str, lamport_ts: int, orden_llegada: int, ejecutor_fn, futuro: Future, al_iniciar=None, al_terminar=None):
         self.id_tarea = id_tarea
         self.lamport_ts = lamport_ts
         self.orden_llegada = orden_llegada
         self.ejecutor_fn = ejecutor_fn
         self.futuro = futuro
+        self.al_iniciar = al_iniciar
+        self.al_terminar = al_terminar
         self.encolada_en = time.perf_counter()
         self.en_cola_s = 0.0
 
@@ -52,9 +54,10 @@ class TareaEncolada:
 class PoolWorkers:
     """Pool de workers con concurrencia acotada y cola protegida por Mutex."""
 
-    def __init__(self, lanzador, workers_max: int = 4, logger=None):
+    def __init__(self, lanzador, workers_max: int = 4, logger=None, cola_max: int = 0):
         self.lanzador = lanzador
         self.workers_max = max(1, workers_max)
+        self.cola_max = max(0, cola_max)
         self.log = logger
         
         # Sincronización y estructuras compartidas
@@ -81,25 +84,42 @@ class PoolWorkers:
         with self._mutex:
             return len(self._cola)
 
+    def posicion_en_cola(self, id_tarea: str) -> int:
+        """Devuelve la posición 1-indexed de la tarea en la cola ordenada según Lamport."""
+        with self._mutex:
+            ordenadas = sorted(self._cola)
+            for idx, t in enumerate(ordenadas, start=1):
+                if t.id_tarea == id_tarea:
+                    return idx
+            return 1
+
     def cerrar(self, esperar: bool = False):
         """Detiene ordenadamente el pool de workers."""
         self._pool_ejecutor.shutdown(wait=esperar)
 
-    def ejecutar_tarea(self, imagen, calculo, parametros, datos, lamport_ts: int = 0):
-        """Encola la tarea bajo exclusión mutua y espera la resolución del Future.
+    def encolar(self, id_tarea: str, ejecutor_fn, lamport_ts: int = 0, al_iniciar=None, al_terminar=None) -> Future:
+        """Encola una tarea bajo exclusión mutua de forma no bloqueante y retorna su Future.
         
-        Retorna:
-          Tupla: (resultado_del_lanzador, segundos_de_espera_en_cola)
+        Verifica el límite de cola saturada (503 con Retry-After si supera cola_max).
         """
         futuro: Future = Future()
         with self._mutex:
+            if self.cola_max > 0 and len(self._cola) >= self.cola_max:
+                from app.errores import ErrorApi, TipoError
+                raise ErrorApi(
+                    TipoError.SERVICIO_SATURADO,
+                    f"cola de tareas saturada ({len(self._cola)} en espera, máximo {self.cola_max})",
+                    cabeceras={"Retry-After": "30"}
+                )
             orden = next(self._contador_llegada)
             tarea = TareaEncolada(
-                id_tarea=f"tarea-{orden}",
+                id_tarea=id_tarea,
                 lamport_ts=lamport_ts,
                 orden_llegada=orden,
-                ejecutor_fn=lambda: self.lanzador.ejecutarTareaRemota(imagen, calculo, parametros, datos),
-                futuro=futuro
+                ejecutor_fn=ejecutor_fn,
+                futuro=futuro,
+                al_iniciar=al_iniciar,
+                al_terminar=al_terminar
             )
             # Inserción en la Min-Heap respetando el orden de Lamport
             heapq.heappush(self._cola, tarea)
@@ -110,6 +130,20 @@ class PoolWorkers:
                 )
             self._intentar_despachar_bajo_lock()
 
+        return futuro
+
+    def ejecutar_tarea(self, imagen, calculo, parametros, datos, lamport_ts: int = 0):
+        """Encola la tarea de forma síncrona y bloquea esperando la resolución del Future.
+        
+        Retorna:
+          Tupla: (resultado_del_lanzador, segundos_de_espera_en_cola)
+        """
+        orden = next(self._contador_llegada)
+        futuro = self.encolar(
+            id_tarea=f"tarea-{orden}",
+            ejecutor_fn=lambda: self.lanzador.ejecutarTareaRemota(imagen, calculo, parametros, datos),
+            lamport_ts=lamport_ts
+        )
         # Se espera el resultado FUERA de la sección crítica para no bloquear la cola a otros hilos
         return futuro.result()
 
@@ -128,12 +162,29 @@ class PoolWorkers:
 
     def _ejecutar_worker(self, tarea: TareaEncolada):
         """Ejecuta la tarea en un contenedor efímero y libera el worker al finalizar."""
+        if tarea.al_iniciar:
+            try:
+                tarea.al_iniciar(tarea.id_tarea, tarea.en_cola_s)
+            except Exception as e:
+                if self.log:
+                    self.log.warning("pool | error en callback al_iniciar %s: %s", tarea.id_tarea, e)
+
+        resultado = None
+        error = None
         try:
             resultado = tarea.ejecutor_fn()
             tarea.futuro.set_result((resultado, tarea.en_cola_s))
         except Exception as exc:
+            error = exc
             tarea.futuro.set_exception(exc)
         finally:
+            if tarea.al_terminar:
+                try:
+                    tarea.al_terminar(tarea.id_tarea, resultado, error, tarea.en_cola_s)
+                except Exception as e:
+                    if self.log:
+                        self.log.warning("pool | error en callback al_terminar %s: %s", tarea.id_tarea, e)
+
             with self._mutex:
                 self._workers_activos -= 1
                 if self.log:

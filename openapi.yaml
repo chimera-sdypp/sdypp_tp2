@@ -156,6 +156,140 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
+  /videos:
+    post:
+      operationId: crearVideo
+      summary: Crear un trabajo asíncrono de transcodificación de video (Hits 2 y 3)
+      description: |
+        Acepta un archivo de video vía `multipart/form-data` o una URL pública vía `application/json`.
+        Valida que el tamaño sea <= 1 GiB, duración <= 15 min, resolución <= 4K y calidades <= original.
+        Devuelve `202 Accepted` con cabecera `Location: /videos/{id}`.
+      parameters:
+        - $ref: '#/components/parameters/XLamportClock'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [video, calidades]
+              properties:
+                video:
+                  type: string
+                  format: binary
+                  description: Archivo de video a transcodificar.
+                calidades:
+                  type: string
+                  example: "720,480"
+                  description: Alturas deseadas separadas por comas (1080, 720, 480, 360, 240).
+          application/json:
+            schema:
+              type: object
+              required: [url, calidades]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: "https://ejemplo.com/video.mp4"
+                calidades:
+                  type: array
+                  items: {type: integer, enum: [1080, 720, 480, 360, 240]}
+                  example: [720, 480]
+      responses:
+        '202':
+          description: Trabajo aceptado y encolado.
+          headers:
+            Location:
+              schema: {type: string}
+              description: Ruta para consultar el estado del trabajo (`/videos/{id}`).
+            X-Lamport-Clock:
+              $ref: '#/components/headers/XLamportClock'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespuestaCrearVideo'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '415':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/DemasiadosPedidos'
+        '503':
+          $ref: '#/components/responses/Error'
+
+  /videos/{id}:
+    get:
+      operationId: consultarVideo
+      summary: Consultar el estado y progreso de un trabajo de video
+      description: |
+        Devuelve el estado del trabajo (`en_cola`, `procesando`, `listo`, `error`),
+        el progreso numérico (0-100), tiempos y resultados de descarga si terminó.
+        Sólo el dueño o un admin pueden consultar.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[0-9a-f]{32}$'}
+        - $ref: '#/components/parameters/XLamportClock'
+      responses:
+        '200':
+          description: Estado del trabajo.
+          headers:
+            Retry-After:
+              description: Sugerencia de espera mientras no termina.
+              schema: {type: integer}
+            X-Lamport-Clock:
+              $ref: '#/components/headers/XLamportClock'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespuestaConsultarVideo'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /videos/{id}/{calidad}:
+    get:
+      operationId: descargarVideo
+      summary: Descargar el video transcodificado en una calidad específica
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[0-9a-f]{32}$'}
+        - name: calidad
+          in: path
+          required: true
+          schema: {type: integer, enum: [1080, 720, 480, 360, 240]}
+        - $ref: '#/components/parameters/XLamportClock'
+      responses:
+        '200':
+          description: Archivo de video MP4 resultante.
+          headers:
+            Content-Disposition:
+              schema: {type: string}
+              example: 'attachment; filename="video_720p.mp4"'
+            X-Lamport-Clock:
+              $ref: '#/components/headers/XLamportClock'
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
 components:
   securitySchemes:
     bearer:
@@ -243,6 +377,47 @@ components:
                 total_s: {type: number, description: 'Desde que el servidor empezó a atender el pedido hasta tener la respuesta (validación, descarga de la imagen, cola y ejecución).'}
             lamport_ts: {type: integer, description: Sólo Hit 2. Igual a la cabecera `X-Lamport-Clock`.}
             nodo: {type: integer, description: Sólo Hit 3. ID del nodo que ejecutó la tarea.}
+    RespuestaCrearVideo:
+      type: object
+      required: [codigo, contenido]
+      properties:
+        codigo: {type: integer, const: 202}
+        contenido:
+          type: object
+          required: [id, estado, calidades]
+          properties:
+            id: {type: string, format: uuid, description: Identificador único del trabajo.}
+            estado: {type: string, enum: [en_cola, procesando, completado, fallido]}
+            calidades:
+              type: array
+              items: {type: string, enum: ['720p', '480p', '360p', '240p']}
+            nodo: {type: integer, description: Sólo Hit 3. ID del nodo que encoló el trabajo.}
+    RespuestaConsultarVideo:
+      type: object
+      required: [codigo, contenido]
+      properties:
+        codigo: {type: integer, const: 200}
+        contenido:
+          type: object
+          required: [id, estado, calidades_solicitadas, calidades_disponibles, progreso, duracion_s]
+          properties:
+            id: {type: string, format: uuid}
+            estado: {type: string, enum: [en_cola, procesando, completado, fallido]}
+            calidades_solicitadas:
+              type: array
+              items: {type: string, enum: ['720p', '480p', '360p', '240p']}
+            calidades_disponibles:
+              type: array
+              items: {type: string, enum: ['720p', '480p', '360p', '240p']}
+            progreso:
+              type: object
+              additionalProperties:
+                type: integer
+                minimum: 0
+                maximum: 100
+            duracion_s: {type: [number, 'null']}
+            error: {type: [string, 'null']}
+            nodo: {type: integer, description: Sólo Hit 3.}
     Health:
       type: object
       required: [codigo, contenido]
@@ -261,6 +436,14 @@ components:
                 workers_activos: {type: integer}
                 workers_max: {type: integer}
                 tareas_encoladas: {type: integer}
+            videos:
+              description: Métricas de la cola de transcodificación de videos.
+              type: object
+              properties:
+                en_cola: {type: integer}
+                procesando: {type: integer}
+                max_simultaneos: {type: integer}
+                max_en_cola: {type: integer}
             lamport_ts: {type: integer, description: Sólo Hit 2.}
             cluster:
               description: Sólo Hit 3. La vista del nodo que contestó; `nodos` sólo si contestó el coordinador.
@@ -297,7 +480,10 @@ components:
                          IMAGEN_NO_PERMITIDA, RUTA_INEXISTENTE, METODO_NO_PERMITIDO,
                          CUERPO_DEMASIADO_GRANDE, TIPO_DE_CONTENIDO, PAYLOAD_INVALIDO, IMAGEN_INEXISTENTE,
                          TAREA_RECHAZADA, ERROR_INTERNO, TAREA_FALLIDA, REGISTRY_NO_DISPONIBLE,
-                         SERVICIO_NO_DISPONIBLE, TAREA_SIN_RESPUESTA, NODO_NO_DISPONIBLE, CLUSTER_NO_DISPONIBLE]
+                         SERVICIO_NO_DISPONIBLE, TAREA_SIN_RESPUESTA, NODO_NO_DISPONIBLE, CLUSTER_NO_DISPONIBLE,
+                         TRABAJO_INEXISTENTE, CALIDAD_NO_SOLICITADA, RESULTADO_NO_LISTO, VIDEO_DEMASIADO_GRANDE,
+                         ARCHIVO_NO_ES_VIDEO, VIDEO_DEMASIADO_LARGO, RESOLUCION_NO_SOPORTADA, CALIDAD_SUPERIOR_AL_ORIGINAL,
+                         URL_INVALIDA, URL_INACCESIBLE, DEMASIADOS_TRABAJOS, SERVICIO_SATURADO]
                 mensaje: {type: string}
                 detalles:
                   type: array

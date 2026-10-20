@@ -12,8 +12,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 
+# Instalación de ffmpeg para validación previa con ffprobe (Contrato § Anexo)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
 # Sin root. El acceso al socket de Docker se da desde el compose con `group_add`.
-RUN useradd --uid 10001 --no-create-home servidor && mkdir logs && chown servidor logs
+# Usuario servidor con UID 10001 compartido con tarea-video para permisos sobre /trabajos
+RUN useradd --uid 10001 --no-create-home servidor && \
+    mkdir -p logs /trabajos && \
+    chown -R servidor logs /trabajos
 USER servidor
 
 EXPOSE 8080
