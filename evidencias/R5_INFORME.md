@@ -119,5 +119,5 @@ Siguiendo las buenas prácticas arquitectónicas y la preparación para entornos
 
 ### 3.8 Entorno de Ejecución y Timeout Contractual
 - **Timeout Contractual**: El servidor se ejecuta respetando `TP2_TIMEOUT_EJECUCION = 60` segundos (estipulado en el contrato público).
-- **Despliegue vs Local**: Las pruebas pueden ejecutarse localmente mediante Docker Compose o directamente contra el despliegue remoto en AWS EC2 (`http://18.231.127.74:8082`) suministrando la variable `TP2_SERVIDOR`.
+- **Despliegue vs Local**: Las pruebas pueden ejecutarse localmente mediante Docker Compose o directamente contra el despliegue remoto en AWS EC2 (`http://54.207.243.253:8082`) suministrando la variable `TP2_SERVIDOR`.
 

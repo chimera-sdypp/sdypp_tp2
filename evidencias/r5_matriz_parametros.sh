@@ -8,7 +8,7 @@
 #
 # Uso:
 #   evidencias/r5_matriz_parametros.sh [hit2]
-#   TP2_SERVIDOR="http://18.231.127.74:8082" TP2_JWT_SECRET=... evidencias/r5_matriz_parametros.sh
+#   TP2_SERVIDOR="http://54.207.243.253:8082" TP2_JWT_SECRET=... evidencias/r5_matriz_parametros.sh
 set -euo pipefail
 
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"

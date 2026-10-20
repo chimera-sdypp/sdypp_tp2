@@ -7,9 +7,9 @@ errores posibles y lo que el contrato **no** devuelve. El diseño y el porqué d
 
 | Hit | URL | Qué podés hacer |
 |---|---|---|
-| 1 | `http://18.231.127.74:8081` | Mandar un cálculo y que se ejecute en un contenedor Docker que se crea y se borra para esa tarea |
-| 2 | `http://18.231.127.74:8082` | Lo mismo, con varias tareas a la vez: hasta 4 corren en paralelo y el resto espera en una cola ordenada por reloj de Lamport |
-| 3 | `http://18.231.127.74:8083` | Lo mismo, contra 3 servidores detrás de nginx: si matás uno, incluso el coordinador, las tareas siguen saliendo |
+| 1 | `http://54.207.243.253:8081` | Mandar un cálculo y que se ejecute en un contenedor Docker que se crea y se borra para esa tarea |
+| 2 | `http://54.207.243.253:8082` | Lo mismo, con varias tareas a la vez: hasta 4 corren en paralelo y el resto espera en una cola ordenada por reloj de Lamport |
+| 3 | `http://54.207.243.253:8083` | Lo mismo, contra 3 servidores detrás de nginx: si matás uno, incluso el coordinador, las tareas siguen saliendo |
 
 Los tres exponen `POST /getRemoteTask`, `GET /stats` y `GET /health`. Los mensajes entre nodos del Hit 3
 (`/cluster/*`) y el servicio tarea no son públicos.
@@ -61,7 +61,7 @@ en la lista blanca, existente y, si la lista fija un digest, con ese digest.
 ```
 
 ```bash
-curl -s -X POST http://18.231.127.74:8082/getRemoteTask \
+curl -s -X POST http://54.207.243.253:8082/getRemoteTask \
   -H "Authorization: Bearer $TP2_TOKEN" -H 'Content-Type: application/json' \
   -d '{"calculo":"suma","parametros":{"a":3,"b":4},"imagen":"cerberusdistribuido/tarea:1.0.0"}'
 ```
