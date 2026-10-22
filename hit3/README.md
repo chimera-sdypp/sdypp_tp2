@@ -375,6 +375,32 @@ obligatorio), y se valida en cada llamada, antes de leer el cuerpo.
 - **`GET /stats`** (admin): tareas ejecutadas y fallidas, tareas por imagen, latencia promedio y p95 (últimas 1000 tareas), tareas en cola (siempre 0: el coordinador asigna cada tarea a un nodo y se ejecuta ya), workers ocupados (las tareas en curso de los 3 nodos), pedidos por código HTTP y el desglose por nodo. **Es del cluster entero**: cada tarea la cuenta el nodo que recibió el pedido y el que atiende `/stats` le pide los números a los otros dos (`GET /cluster/stats`, interno); si alguno no contesta, `nodos_sin_respuesta` lo dice y los totales son parciales. Todo en memoria: se reinicia con el nodo. El detalle de cada campo está en la [sección 8 del Hit 2](../hit2/README.md#8-autenticación-por-request-roles-y-stats-r4).
 - **Evidencia**: `evidencias/r4_autenticacion.sh hit1` levanta el servidor con un secreto efímero y prueba con `curl` (16 pedidos seguidos, porque el límite es por nodo) sin token → 401, usuario en `/stats` → 403, admin en `/stats` → 200, token inválido o vencido → 401 y el 429.
 
+## Tareas diversas y matriz de parámetros (R5)
+
+Las mismas 3 tareas y la misma matriz V1 × V2 × V3 que el [Hit 2](../hit2/README.md#9-tareas-diversas-y-matriz-de-parámetros-r5),
+contra nginx, con `evidencias/r5_matriz_parametros.sh hit3`, en local (Ryzen 5 3600, 12 hilos, 32 GB).
+Las 27 celdas y los casos de cada tarea están en [`evidencias/R5_INFORME_hit3.md`](../evidencias/R5_INFORME_hit3.md).
+El cuello de botella se midió en `/stats` (con un token de admin), que suma los 3 nodos.
+
+| Clientes (V3) | p50 (mediana de 9 celdas) | Tareas/min (mediana) | Tareas a la vez (máx.) |
+|---|---|---|---|
+| 1 | 0,90 s | 59 | 1 |
+| 10 | 1,50 s | 285 | 8 |
+| 50 | 6,95 s | 268 | 40 |
+
+- **Sin cola:** el coordinador reparte cada tarea al nodo con menos carga y el nodo la corre enseguida.
+  Con 50 clientes corren 40 contenedores a la vez entre los 3 nodos y la CPU llega al 100 %. El paso por
+  nginx y el coordinador suma unos 70 ms con 1 cliente respecto del Hit 1.
+- **Con 50 clientes la latencia salta en alguna celda distinta en cada corrida** (36 s en la primera,
+  22 s en la segunda; el resto entre 5 y 9 s): el host está saturado, no es una combinación de V1 y V2.
+- **Dónde se rompe:** en la primera corrida, 1 pedido de 40 recibió `500` con 50 clientes. El log de esa
+  corrida no quedó guardado; lo más probable es la misma causa que en el
+  [Hit 1](../hit1/README.md#tareas-diversas-y-matriz-de-parámetros-r5) (el lanzador es el mismo: un cliente
+  de Docker compartido entre hilos). En la segunda corrida no hubo ningún `500` para el cliente. Con la CPU al 100 % también se cortó un heartbeat entre nodos (`500` interno,
+  `ClientDisconnect`), sin efecto para el cliente.
+- **Bots:** 153 de 153 rechazados con `401`, sin crear contenedores.
+- Los números no se comparan en valor absoluto con el Hit 2: aquel se midió en otra máquina.
+
 ## Despliegue
 
 En la misma VM de AWS EC2 que los Hits 1 y 2: **http://54.207.243.253:8083/health**. Como en los

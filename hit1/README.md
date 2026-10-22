@@ -231,6 +231,29 @@ obligatorio), y se valida en cada llamada, antes de leer el cuerpo.
 - **`GET /stats`** (admin): tareas ejecutadas y fallidas, tareas por imagen, latencia promedio y p95 (últimas 1000 tareas), tareas en cola (siempre 0: acá no hay cola), workers ocupados (las tareas en curso) y pedidos por código HTTP. Todo en memoria: se reinicia con el servidor. El detalle de cada campo está en la [sección 8 del Hit 2](../hit2/README.md#8-autenticación-por-request-roles-y-stats-r4).
 - **Evidencia**: `evidencias/r4_autenticacion.sh hit1` levanta el servidor con un secreto efímero y prueba con `curl` sin token → 401, usuario en `/stats` → 403, admin en `/stats` → 200, token inválido o vencido → 401 y el 429.
 
+## Tareas diversas y matriz de parámetros (R5)
+
+Las mismas 3 tareas y la misma matriz V1 × V2 × V3 que el [Hit 2](../hit2/README.md#9-tareas-diversas-y-matriz-de-parámetros-r5),
+con `evidencias/r5_matriz_parametros.sh hit1`, en local (Ryzen 5 3600, 12 hilos, 32 GB). Las 27 celdas
+y los casos de cada tarea están en [`evidencias/R5_INFORME_hit1.md`](../evidencias/R5_INFORME_hit1.md).
+El cuello de botella se midió en `/stats`, con un token de admin.
+
+| Clientes (V3) | p50 (mediana de 9 celdas) | Tareas/min (mediana) | Tareas a la vez (máx.) |
+|---|---|---|---|
+| 1 | 0,83 s | 71 | 1 |
+| 10 | 1,39 s | 311 | 8 |
+| 50 | 5,28 s | 262 | 39 |
+
+- **Sin pool ni cola, no hay tope:** con 50 clientes corren 39 contenedores a la vez y la CPU llega al
+  100 %. Por eso rinde más que el Hit 2 (4 workers), pero no aísla: las tareas no tienen límite de CPU
+  ni de memoria.
+- **Dónde se rompe:** con 50 clientes, 1 pedido de 40 recibió `500` en cada corrida. El log muestra un
+  error dentro del cliente de Docker (`AttributeError: 'NoneType' object has no attribute 'qsize'`, de
+  `urllib3`): un solo cliente compartido por 40 hilos a la vez. En el Hit 2 no pasa porque el pool
+  limita a 4.
+- **Bots:** 153 de 153 rechazados con `401`, sin crear contenedores.
+- Los números no se comparan en valor absoluto con el Hit 2: aquel se midió en otra máquina.
+
 ## Despliegue
 
 Público en **http://54.207.243.253:8081/health**, en la misma VM de AWS EC2 que el TP1 (que sigue en
