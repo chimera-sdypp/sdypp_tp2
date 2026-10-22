@@ -56,6 +56,28 @@ La validación es estricta: no convierte tipos (`"3"` no es `3`), no acepta camp
 corrige nada; el error dice qué campo falló. La imagen se comprueba antes de ejecutar: bien formada,
 en la lista blanca, existente y, si la lista fija un digest, con ese digest.
 
+### El nombre de la imagen: qué se acepta y por qué
+
+Las reglas son las de las referencias de Docker, así que vale lo mismo que acepta `docker pull`. Si
+una regla falla, la respuesta es `422 PAYLOAD_INVALIDO` y el mensaje dice cuál.
+
+| Regla | Por qué |
+|---|---|
+| `[registry/]usuario/repositorio`, seguido de `:tag` o `@sha256:…`. Sin registry se completa `docker.io`, y un nombre suelto pasa a `library/` (`python:3.14` es `docker.io/library/python:3.14`) | Es la forma canónica de Docker. Al normalizar, dos formas de escribir la misma imagen no pueden esquivar la lista blanca |
+| Nombre: minúsculas y dígitos, con `.`, `_`, `__` o `-` entre medio | Docker no admite mayúsculas en el nombre. Además deja afuera `;`, espacios o `$`, con los que se podría colar otro comando |
+| Tag: hasta 128 caracteres, letras (también mayúsculas), dígitos, `_`, `.` y `-`. No puede empezar con `.` ni `-` | Es el mismo límite de Docker. El tag es una etiqueta libre: `1.0.0`, `v1`, `D100B1001B` o `2.megusta.micasa` son válidos |
+| Hasta 255 caracteres en total | Es el tope que Docker le pone al nombre. Acá se cuenta sobre toda la referencia, y corta antes de procesar un texto gigante |
+| Versión obligatoria y sin `latest` | `latest` no quiere decir "la última": es un tag más, que cambia de imagen con cada push. Si se aceptara, dos pedidos iguales podrían correr código distinto, y el resultado no se podría reproducir ni auditar. Por eso se rechaza en vez de resolverlo: el cliente siempre sabe qué versión pidió |
+| Digest `sha256:` con 64 caracteres hexadecimales | Identifica el contenido exacto: aunque alguien vuelva a publicar el tag, el digest no cambia. Por eso la lista blanca puede fijar una imagen a su digest |
+
+**Versiones (SemVer).** Nuestras imágenes se publican con [versionado semántico](https://semver.org/lang/es/),
+`MAJOR.MINOR.PATCH`. MAJOR sube cuando se rompe el contrato con quien la usa (por ejemplo, cambia el
+formato de `parametros`), MINOR cuando se agrega algo compatible (un cálculo nuevo) y PATCH cuando se
+corrige un error sin cambiar la interfaz. `tarea:1.0.0` es la primera versión estable, y las tareas
+de R5 siguen la misma regla (`cpu-1.0.0`, `archivos-1.0.0`, `falla-1.0.0`). Un tag publicado no se
+vuelve a publicar: una corrección sale como `1.0.1`. El servidor no exige SemVer, cualquier tag fijo
+sirve; es la convención con la que publicamos.
+
 ```json
 {"calculo": "suma", "parametros": {"a": 3, "b": 4}, "datos": {}, "imagen": "cerberusdistribuido/tarea:1.0.0"}
 ```
