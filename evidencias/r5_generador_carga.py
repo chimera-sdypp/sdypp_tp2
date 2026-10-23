@@ -96,30 +96,46 @@ class SamplerHost(threading.Thread):
 
 
 class SamplerHealth(threading.Thread):
-    """Muestreador en segundo plano que consulta /health para registrar cuellos de botella reales sin saturar el socket."""
+    """Muestreador en segundo plano que registra los cuellos de botella reales sin saturar el socket.
 
-    def __init__(self, servidor: str, intervalo: float = 0.08):
+    Con un token de admin consulta `/stats`, que expone `workers_ocupados` y `tareas_en_cola` en los
+    tres hits (R4). Sin token lee el pool de `/health`, que sólo existe en el Hit 2.
+    """
+
+    def __init__(self, servidor: str, intervalo: float = 0.08, token_admin: str | None = None):
         super().__init__(daemon=True)
         self.servidor = servidor
         self.intervalo = intervalo
+        self.token_admin = token_admin
+        self.fuente = "/stats" if token_admin else "/health"
         self.activo = True
         self.max_activos = 0
         self.max_encoladas = 0
-        self.workers_max = 4
+        # En los Hits 1 y 3 /stats informa workers_max = null: no hay un tope de workers.
+        self.workers_max = None if token_admin else 4
         self.total_muestras = 0
         self.muestras_fallidas = 0
 
     def run(self):
-        url = f"{self.servidor}/health"
+        url = f"{self.servidor}{self.fuente}"
+        cabeceras = {"X-Lamport-Clock": "1"}
+        if self.token_admin:
+            cabeceras["Authorization"] = f"Bearer {self.token_admin}"
         while self.activo:
             try:
-                req = Request(url, headers={"X-Lamport-Clock": "1"})
+                req = Request(url, headers=cabeceras)
                 with urlopen(req, timeout=1.5) as resp:
                     datos = json.loads(resp.read().decode("utf-8"))
-                    pool_info = datos.get("contenido", {}).get("pool", {})
-                    activos = pool_info.get("workers_activos", 0)
-                    encoladas = pool_info.get("tareas_encoladas", 0)
-                    wmax = pool_info.get("workers_max", 4)
+                    if self.token_admin:
+                        contenido = datos.get("contenido", {})
+                        activos = contenido.get("workers_ocupados", 0) or 0
+                        encoladas = contenido.get("tareas_en_cola", 0) or 0
+                        wmax = contenido.get("workers_max")
+                    else:
+                        pool_info = datos.get("contenido", {}).get("pool", {})
+                        activos = pool_info.get("workers_activos", 0)
+                        encoladas = pool_info.get("tareas_encoladas", 0)
+                        wmax = pool_info.get("workers_max", 4)
                     if activos > self.max_activos:
                         self.max_activos = activos
                     if encoladas > self.max_encoladas:
@@ -437,6 +453,8 @@ def ejecutar_celda_matriz(
     v2_acciones: int,
     v3_concurrencia: int,
     workers_pool: int = 4,
+    token_admin: str | None = None,
+    hit: str = "hit2",
 ) -> dict:
     """Ejecuta una celda de la matriz V1 x V2 x V3 con mezcla de usuarios/bots y medición empírica de /health."""
     payload = armar_payload_matriz(v1_archivos, v2_acciones)
@@ -524,7 +542,7 @@ def ejecutar_celda_matriz(
                         latencias_exitosas.append(duracion)
 
     # Iniciar sondeo en tiempo real de /health y telemetría del host
-    sampler = SamplerHealth(servidor)
+    sampler = SamplerHealth(servidor, token_admin=token_admin)
     sampler_host = SamplerHost()
     sampler.start()
     sampler_host.start()
@@ -542,7 +560,7 @@ def ejecutar_celda_matriz(
     metricas_host = sampler_host.metricas()
     max_activos = sampler.max_activos
     max_encoladas = sampler.max_encoladas
-    workers_max = sampler.workers_max or workers_pool
+    workers_max = sampler.workers_max if sampler.fuente == "/stats" else (sampler.workers_max or workers_pool)
 
     total_pedidos = len(latencias_totales)
     total_exitosos = len(latencias_exitosas)
@@ -562,20 +580,24 @@ def ejecutar_celda_matriz(
 
     throughput_tpm = (total_exitosos / max(0.001, t_total)) * 60.0
 
-    # Diagnóstico del cuello de botella MEDIDO empíricamente a través de /health
+    # Diagnóstico del cuello de botella MEDIDO empíricamente (en /health o en /stats).
+    # Sin tope de workers (Hits 1 y 3) se informa cuántas tareas corrían a la vez.
+    fuente = sampler.fuente
+    tope = f"/{workers_max}" if workers_max else ""
+    unidad = "workers activos" if workers_max else "tareas en curso"
     if max_encoladas > 0:
         obs = (
-            f"Medido en /health: saturación de pool ({max_activos}/{workers_max} workers activos) "
-            f"y pico de {max_encoladas} tareas encoladas en Min-Heap"
+            f"Medido en {fuente}: saturación de pool ({max_activos}{tope} {unidad}) "
+            f"y pico de {max_encoladas} tareas encoladas" + (" en Min-Heap" if hit == "hit2" else "")
         )
     elif max_activos > 1:
         obs = (
-            f"Medido en /health: {max_activos}/{workers_max} workers activos simultáneos (0 encoladas). "
-            f"Concurrencia balanceada"
+            f"Medido en {fuente}: {max_activos}{tope} {unidad} a la vez (0 encoladas). "
+            + ("Concurrencia balanceada" if workers_max else "Sin cola: un contenedor por pedido")
         )
     else:
         obs = (
-            f"Sin contención (/health: máx {max(1, max_activos)}/{workers_max} worker activo, 0 encoladas). "
+            f"Sin contención ({fuente}: máx {max(1, max_activos)}{tope} {unidad}, 0 encoladas). "
             f"Cuello de botella: ciclo de vida contenedor (~{round(p50, 2)} s)"
         )
 
@@ -601,11 +623,14 @@ def ejecutar_celda_matriz(
         "cpu_host_pct": metricas_host["cpu_promedio_pct"],
         "cpu_host_pico_pct": metricas_host["cpu_pico_pct"],
         "mem_host_mb": metricas_host["mem_host_mb"],
+        "fuente_medicion": fuente,
+        "workers_max": workers_max,
         "observaciones": obs,
     }
 
 
-def ejecutar_matriz_completa(servidor: str, tokens_usuarios: list[str]) -> list[dict]:
+def ejecutar_matriz_completa(servidor: str, tokens_usuarios: list[str], token_admin: str | None = None,
+                             hit: str = "hit2") -> list[dict]:
     """Recorre las 27 combinaciones V1 x V2 x V3 y mide rendimiento empírico."""
     v1_valores = [1, 10, 100]
     v2_valores = [1, 3, 5]
@@ -629,18 +654,27 @@ def ejecutar_matriz_completa(servidor: str, tokens_usuarios: list[str]) -> list[
                     v1_archivos=v1,
                     v2_acciones=v2,
                     v3_concurrencia=v3,
+                    token_admin=token_admin,
+                    hit=hit,
                 )
-                print(f" -> p50={res['p50_latencia_s']}s | p95={res['p95_latencia_s']}s | {res['throughput_tpm']} tpm | /health: act={res['workers_activos_medidos']} enc={res['tareas_encoladas_medidas']}")
+                print(f" -> p50={res['p50_latencia_s']}s | p95={res['p95_latencia_s']}s | {res['throughput_tpm']} tpm | {res['fuente_medicion']}: act={res['workers_activos_medidos']} enc={res['tareas_encoladas_medidas']}")
                 resultados_matriz.append(res)
                 nro += 1
 
     return resultados_matriz
 
 
-def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], salida_path: Path):
+NOMBRES_HIT = {"hit1": "Hit 1", "hit2": "Hit 2", "hit3": "Hit 3"}
+PUERTOS_HIT = {"hit1": 8081, "hit2": 8082, "hit3": 8083}
+
+
+def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], salida_path: Path, hit: str = "hit2"):
     """Genera el informe final de R5 en formato Markdown con análisis empírico y metodológico riguroso."""
+    nombre_hit = NOMBRES_HIT.get(hit, hit)
+    fuente = matriz[0].get("fuente_medicion", "/health") if matriz else "/health"
+    con_pool = hit == "hit2"
     lineas = []
-    lineas.append("# Informe de Evidencia R5 — Pruebas con Tareas Diversas y Matriz de Parámetros\n")
+    lineas.append(f"# Informe de Evidencia R5 ({nombre_hit}) — Pruebas con Tareas Diversas y Matriz de Parámetros\n")
     lineas.append(
         "Este informe documenta los resultados empíricos obtenidos para el **Requerimiento R5**, "
         "incluyendo la evaluación de las 3 imágenes/tareas especializadas, la matriz completa de "
@@ -681,12 +715,18 @@ def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], sal
         "usuarios con tokens de autenticación diferenciados, mezclado con un ~20% de solicitudes de bots (sin token o con "
         "credenciales maliciosas)."
     )
-    lineas.append(
-        "- **Detección empírica de cuellos de botella**: Se monitoreó el endpoint `/health` en tiempo real mediante un hilo "
-        "dedicado durante cada celda, registrando los valores reales de `workers_activos` y `tareas_encoladas` del pool.\n"
-    )
+    if fuente == "/stats":
+        lineas.append(
+            "- **Detección empírica de cuellos de botella**: Se monitoreó `/stats` (con un token de admin) en tiempo real "
+            "mediante un hilo dedicado durante cada celda, registrando los valores reales de `workers_ocupados` y `tareas_en_cola`.\n"
+        )
+    else:
+        lineas.append(
+            "- **Detección empírica de cuellos de botella**: Se monitoreó el endpoint `/health` en tiempo real mediante un hilo "
+            "dedicado durante cada celda, registrando los valores reales de `workers_activos` y `tareas_encoladas` del pool.\n"
+        )
 
-    lineas.append("| $V_1$ (Archivos) | $V_2$ (Acciones) | $V_3$ (Concurrencia) | Latencia p50 | Latencia p95 | Throughput (tpm) | CPU Host Prom/Pico | Mem Host (MB) | Error Funcional | Diagnóstico Empírico (/health) |")
+    lineas.append(f"| $V_1$ (Archivos) | $V_2$ (Acciones) | $V_3$ (Concurrencia) | Latencia p50 | Latencia p95 | Throughput (tpm) | CPU Host Prom/Pico | Mem Host (MB) | Error Funcional | Diagnóstico Empírico ({fuente}) |")
     lineas.append("|---|---|---|---|---|---|---|---|---|---|")
     for m in matriz:
         cpu_prom = m.get("cpu_host_pct", 0.0)
@@ -727,7 +767,9 @@ def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], sal
         f"Con un solo cliente ($V_3 = 1$) la latencia p50 pasa de {p50_min} s ($V_1 = 1$, $V_2 = 1$) a {p50_max} s "
         f"($V_1 = 100$, $V_2 = 5$). El piso medido, {piso_latencia:.2f} s, es el de crear, arrancar, esperar y borrar el contenedor "
         "efímero: ese costo domina y el procesamiento de los archivos agrega poco sobre él. Por eso, con $V_3 = 10$ y $V_3 = 50$ "
-        "la latencia depende sobre todo de la cola y casi no de $V_1$ ni de $V_2$. No se midió por separado cuánto tarda la tarea "
+        + ("la latencia depende sobre todo de la cola" if con_pool else
+           "la latencia depende sobre todo de cuántos contenedores corren a la vez en el host")
+        + " y casi no de $V_1$ ni de $V_2$. No se midió por separado cuánto tarda la tarea "
         "dentro del contenedor, así que el reparto exacto entre ambos costos es una inferencia."
     )
 
@@ -766,34 +808,76 @@ def generar_reporte_markdown(pruebas_tareas: list[dict], matriz: list[dict], sal
         f"- Rechazados con `401 NO_AUTORIZADO`: **{total_rechazos_bot}/{total_pedidos_bot} ({tasa_rechazo:.1f}%)**.\n"
         f"- Latencia media de esos rechazos, medida por el cliente (incluye la red): **{lat_media_bot:.2f} ms**.\n"
         "- Los usuarios legítimos usan varios tokens distintos (tres JWT distintos de `evidencias/emitir_token.py`), no uno compartido.\n"
-        "- La comprobación está en un `@app.middleware('http')` de FastAPI: un pedido sin token válido se rechaza antes de "
-        "llegar a la cola y sin crear ningún contenedor.\n\n"
+        "- La comprobación está en un `@app.middleware('http')` de FastAPI: un pedido sin token válido se rechaza "
+        + ("antes de llegar a la cola y " if con_pool else "")
+        + "sin crear ningún contenedor.\n\n"
         "> [!NOTE]\n"
-        "> **Alcance**: esta autenticación sirve para separar bots y medir la cola de R5. No tiene roles, vencimiento ni `/stats`: "
-        "eso corresponde a R4."
+        "> **Alcance**: es la misma autenticación de R4 (JWT con rol y vencimiento, y `/stats` sólo para admin). Acá sólo se mide "
+        "cuántos pedidos de bots rechaza y cuánto tarda en hacerlo."
     )
 
-    lineas.append("\n### 3.5 Cuello de botella medido en `/health` y Monitoreo del Host")
+    cpu_pico_max = max((m.get("cpu_host_pico_pct", 0.0) for m in matriz), default=0.0)
+    mem_max = max((m.get("mem_host_mb", 0.0) for m in matriz), default=0.0)
+    columna_activos = "Workers activos (de 4)" if con_pool else "Tareas en curso a la vez"
+    campos = ("`workers_activos` y de `tareas_encoladas`" if fuente == "/health"
+              else "`workers_ocupados` y de `tareas_en_cola`")
+
+    lineas.append(f"\n### 3.5 Cuello de botella medido en `{fuente}` y Monitoreo del Host")
     lineas.append(
-        "Durante cada celda un hilo consulta `/health` periódicamente y guarda el máximo de `workers_activos` y de `tareas_encoladas`. "
+        f"Durante cada celda un hilo consulta `{fuente}` periódicamente y guarda el máximo de {campos}. "
         "En simultáneo, se monitorea la utilización real de recursos del host (CPU y memoria residente) leyendo `/proc/stat` y `/proc/meminfo`.\n\n"
         "Máximos observados en toda la matriz:\n\n"
-        "| $V_3$ | Workers activos (de 4) | Tareas encoladas |\n|---|---|---|\n"
+        f"| $V_3$ | {columna_activos} | Tareas encoladas |\n|---|---|---|\n"
         f"| 1 | {act1} | {enc1} |\n| 10 | {act10} | {enc10} |\n| 50 | {act50} | {enc50} |\n\n"
         f"- Con $V_3 = 1$ no hay cola: el cuello de botella es el ciclo de vida del contenedor (~{piso_latencia:.2f} s por tarea).\n"
-        "- Con $V_3 = 10$ y $V_3 = 50$ el pool llega a su tope y el resto espera en la cola: el cuello de botella es el número de "
-        "workers (`TP2_WORKERS_MAX`). En esas celdas la latencia crece con la cola y el throughput deja de crecer.\n"
-        "- **Monitoreo de Host**: Tal como se destacó en la evaluación de arquitectura distribuida, ejecutar $N$ workers en una misma máquina "
-        "podría provocar saturación si no se miden los recursos reales del host. El monitoreo empírico continuo demostró que los workers "
-        "no sufrieron ahogo térmico ni contención por falta de memoria RAM en el sistema operativo host."
+    )
+    if con_pool:
+        lineas.append(
+            "- Con $V_3 = 10$ y $V_3 = 50$ el pool llega a su tope y el resto espera en la cola: el cuello de botella es el número de "
+            "workers (`TP2_WORKERS_MAX`). En esas celdas la latencia crece con la cola y el throughput deja de crecer."
+        )
+    elif hit == "hit3":
+        lineas.append(
+            "- El Hit 3 no tiene cola: el coordinador asigna cada tarea al nodo con menos carga y el nodo la corre enseguida. "
+            "`/stats` suma las tareas en curso de los 3 nodos. Los tres comparten el host y el daemon de Docker, así que no hay un "
+            "tope de workers: con $V_3 = 10$ y $V_3 = 50$ corren a la vez tantas tareas como pedidos haya, y lo que puede limitar "
+            "es el host (CPU, memoria y el daemon que crea y borra cada contenedor), más el paso por nginx y el coordinador."
+        )
+    else:
+        lineas.append(
+            "- El Hit 1 no tiene pool ni cola: cada pedido levanta su contenedor apenas llega. No hay un tope de workers: con "
+            "$V_3 = 10$ y $V_3 = 50$ corren a la vez tantos contenedores como pedidos haya, y lo que puede limitar es el host "
+            "(CPU, memoria y el daemon de Docker, que crea y borra cada contenedor)."
+        )
+    lineas.append(
+        f"- **Host**: en toda la matriz la CPU llegó como máximo al {cpu_pico_max:.1f} % y la memoria usada a {mem_max:.0f} MB "
+        "(columnas de la tabla)."
     )
 
     lineas.append("\n### 3.6 Límites de Recursos Docker (CPU y Memoria)")
-    lineas.append(
-        "Siguiendo las buenas prácticas arquitectónicas y la preparación para entornos orquestados (Kubernetes):\n"
-        "- Cada contenedor efímero es creado con límites estrictos de hardware: `mem_limit = '256m'` y `nano_cpus = 1_000_000_000` (1 CPU virtual).\n"
-        "- Esto previene el problema del *vecino ruidoso* y evita que tareas defectuosas o con fuga de memoria agoten la RAM del host y provoquen OOM Killer generalizado."
-    )
+    if con_pool:
+        lineas.append(
+            "Siguiendo las buenas prácticas arquitectónicas y la preparación para entornos orquestados (Kubernetes):\n"
+            "- Cada contenedor efímero es creado con límites estrictos de hardware: `mem_limit = '256m'` y `nano_cpus = 1_000_000_000` (1 CPU virtual).\n"
+            "- Esto previene el problema del *vecino ruidoso* y evita que tareas defectuosas o con fuga de memoria agoten la RAM del host y provoquen OOM Killer generalizado."
+        )
+    else:
+        lineas.append(
+            f"- Los contenedores de tarea del {nombre_hit} se crean sin límite de CPU ni de memoria. Los límites (`256m` y 1 CPU) "
+            "existen sólo en el Hit 2, donde se agregaron para la medición de 1, 2, 4 y 8 workers. Una tarea que use mucha memoria "
+            "puede afectar al resto del host."
+        )
+
+    if not con_pool:
+        lineas.append("\n### 3.7 Entorno de Ejecución y Timeout Contractual")
+        lineas.append(
+            "- **Timeout Contractual**: El servidor se ejecuta respetando `TP2_TIMEOUT_EJECUCION = 60` segundos (estipulado en el contrato público).\n"
+            "- **Despliegue vs Local**: Las pruebas pueden ejecutarse localmente mediante Docker Compose o directamente contra el despliegue "
+            f"remoto en AWS EC2 (`http://54.207.243.253:{PUERTOS_HIT.get(hit, 8082)}`) suministrando la variable `TP2_SERVIDOR`.\n"
+        )
+        salida_path.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+        print(f"\n[+] Informe Markdown guardado en {salida_path}")
+        return
 
     lineas.append("\n### 3.7 La Cola como Mecanismo de Desacoplamiento de Pedido y Respuesta")
     lineas.append(
@@ -857,6 +941,17 @@ def main():
         default="evidencias/R5_INFORME.md",
         help="Ruta de salida para el informe Markdown",
     )
+    parser.add_argument(
+        "--hit",
+        default="hit2",
+        choices=sorted(NOMBRES_HIT),
+        help="Hit contra el que se corre (cambia el texto del informe)",
+    )
+    parser.add_argument(
+        "--token-admin",
+        default=os.environ.get("TP2_TOKEN_ADMIN", ""),
+        help="JWT con rol admin: mide el cuello de botella en /stats, igual en los tres hits (sin él, lee /health del Hit 2)",
+    )
     args = parser.parse_args()
 
     servidor = args.servidor.rstrip("/")
@@ -881,7 +976,7 @@ def main():
     )
 
     # 2. Matriz combinatoria V1 x V2 x V3 con sondeo de /health
-    matriz = ejecutar_matriz_completa(servidor, lista_tokens)
+    matriz = ejecutar_matriz_completa(servidor, lista_tokens, token_admin=args.token_admin or None, hit=args.hit)
 
     # 3. Guardar resultados JSON
     path_json = Path(args.salida_json)
@@ -899,7 +994,7 @@ def main():
     # 4. Generar reporte Markdown
     path_md = Path(args.salida_md)
     path_md.parent.mkdir(parents=True, exist_ok=True)
-    generar_reporte_markdown(pruebas_tareas, matriz, path_md)
+    generar_reporte_markdown(pruebas_tareas, matriz, path_md, hit=args.hit)
 
 
 if __name__ == "__main__":

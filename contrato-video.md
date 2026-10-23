@@ -1,13 +1,13 @@
-# Contrato — Transcodificación de video (Hits 2 y 3)
+# Contrato — Transcodificación de video (Hit 2)
 
 Le mandás un video y las calidades que querés, y el servidor te devuelve una versión del video en
 cada calidad. Transcodificar puede tardar desde segundos hasta decenas de minutos, así que el
 pedido es **asíncrono**: el servidor acepta el trabajo enseguida, te da un `id`, y vos consultás
 con ese `id` hasta que esté listo.
 
-**Es el mismo contrato en el Hit 2 y en el Hit 3**: mismas rutas, mismos campos, mismos límites y
-mismos errores. Que atrás haya un servidor o un cluster de 3 nodos no cambia nada de lo que ve el
-cliente.
+**Hoy lo implementa el Hit 2** (`http://54.207.243.253:8082`). El Hit 3 todavía no tiene `/videos`.
+El contrato está pensado para que sea el mismo cuando se agregue (mismas rutas, campos, límites y
+errores), y por eso el anexo habla de los nodos.
 
 ```
 POST /videos                  →  202  {id, estado: "en_cola"}

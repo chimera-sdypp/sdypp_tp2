@@ -7,7 +7,7 @@
 #   5. Métricas de latencia p50/p95, throughput y cuellos de botella detectados en /health.
 #
 # Uso:
-#   evidencias/r5_matriz_parametros.sh [hit2]
+#   evidencias/r5_matriz_parametros.sh [hit1|hit2|hit3]     (por defecto hit2)
 #   TP2_SERVIDOR="http://54.207.243.253:8082" TP2_JWT_SECRET=... evidencias/r5_matriz_parametros.sh
 set -euo pipefail
 
@@ -44,9 +44,20 @@ if [ -z "${TP2_TOKENS:-}" ]; then
     : "${TP2_JWT_SECRET:?con TP2_SERVIDOR hace falta TP2_JWT_SECRET o TP2_TOKENS}"
     export TP2_JWT_SECRET
     TOKENS="$(for u in ana beto carla; do python3 "$RAIZ/evidencias/emitir_token.py" --usuario "$u" --rol usuario --horas 4; done | paste -sd,)"
+    # Con un admin, el cuello de botella se mide en /stats, que es igual en los tres hits.
+    TOKEN_ADMIN="$(python3 "$RAIZ/evidencias/emitir_token.py" --usuario r5-admin --rol admin --horas 4)"
 else
     TOKENS="$TP2_TOKENS"
+    TOKEN_ADMIN="${TP2_TOKEN_ADMIN:-}"
 fi
+
+# Cada hit deja su propio informe. El del Hit 2 conserva los nombres de siempre.
+if [ "$HIT" = "hit2" ]; then
+    SALIDA_MD="$RAIZ/evidencias/R5_INFORME.md"
+else
+    SALIDA_MD="$RAIZ/evidencias/R5_INFORME_$HIT.md"
+fi
+SALIDA_JSON="$RAIZ/$HIT/mediciones/matriz_r5_resultados.json"
 
 echo "======================================================================"
 echo "== R5 — Pruebas con Tareas Diversas y Matriz de Parámetros ($HIT) =="
@@ -89,10 +100,12 @@ fi
     --servidor "$URL" \
     --tokens "$TOKENS" \
     --timeout-ejecucion "$TIMEOUT_EJECUCION" \
-    --salida-json "$RAIZ/hit2/mediciones/matriz_r5_resultados.json" \
-    --salida-md "$RAIZ/evidencias/R5_INFORME.md"
+    --hit "$HIT" \
+    --token-admin "$TOKEN_ADMIN" \
+    --salida-json "$SALIDA_JSON" \
+    --salida-md "$SALIDA_MD"
 
 echo "======================================================================"
 echo "== Resumen del Informe R5 =="
 echo "======================================================================"
-cat "$RAIZ/evidencias/R5_INFORME.md"
+cat "$SALIDA_MD"

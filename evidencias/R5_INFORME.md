@@ -87,7 +87,7 @@ El servicio de procesamiento de archivos define 5 transformaciones permitidas en
 - La comprobación está en un `@app.middleware('http')` de FastAPI: un pedido sin token válido se rechaza antes de llegar a la cola y sin crear ningún contenedor.
 
 > [!NOTE]
-> **Alcance**: esta autenticación sirve para separar bots y medir la cola de R5. No tiene roles, vencimiento ni `/stats`: eso corresponde a R4.
+> **Alcance**: es la misma autenticación de R4 (JWT con rol y vencimiento, y `/stats` sólo para admin). Acá sólo se mide cuántos pedidos de bots rechaza y cuánto tarda en hacerlo.
 
 ### 3.5 Cuello de botella medido en `/health` y Monitoreo del Host
 Durante cada celda un hilo consulta `/health` periódicamente y guarda el máximo de `workers_activos` y de `tareas_encoladas`. En simultáneo, se monitorea la utilización real de recursos del host (CPU y memoria residente) leyendo `/proc/stat` y `/proc/meminfo`.
