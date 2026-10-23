@@ -8,7 +8,11 @@ Incluye mediciones reales de throughput con 1, 2, 4 y 8 workers y su análisis c
 
 ## Demo
 
-[![Demo del Hit #2](https://img.youtube.com/vi/cYUaQ5mu_gc/maxresdefault.jpg)](https://youtu.be/cYUaQ5mu_gc)
+### Parte 1
+[![Demo del Hit #2 — Parte 1](https://img.youtube.com/vi/cYUaQ5mu_gc/maxresdefault.jpg)](https://youtu.be/cYUaQ5mu_gc)
+
+### Parte 2
+[![Demo del Hit #2 — Parte 2](https://img.youtube.com/vi/c0vgraxuJMg/maxresdefault.jpg)](https://youtu.be/c0vgraxuJMg)
 
 ---
 
